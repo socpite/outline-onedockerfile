@@ -1,5 +1,5 @@
 type = process
-command = /usr/local/bin/yarn dev
+command = /usr/local/bin/start-outline
 working-dir = /home/ubuntu/outline
 run-as = ubuntu
 restart = true

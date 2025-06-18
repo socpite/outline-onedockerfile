@@ -1,0 +1,43 @@
+#!/bin/bash
+# Quick fix for SMTP server module issue
+
+echo "🔧 Fixing SMTP server dependencies..."
+
+# Install the required packages
+cd /home/ubuntu/outline
+npm install smtp-server mailparser
+
+if [[ $? -eq 0 ]]; then
+    echo "✅ SMTP packages installed successfully"
+    
+    # Test the SMTP server
+    echo "🧪 Testing SMTP server..."
+    timeout 5 /usr/local/bin/local-smtp-server &
+    sleep 2
+    
+    if nc -z 127.0.0.1 1025 2>/dev/null; then
+        echo "✅ SMTP server is working!"
+        pkill -f local-smtp-server
+    else
+        echo "❌ SMTP server still not working"
+    fi
+else
+    echo "❌ Failed to install SMTP packages"
+    echo "Disabling SMTP server temporarily..."
+    
+    # Disable SMTP service
+    rm -f /etc/dinit.d/boot.d/smtp
+    
+    # Update environment to use a dummy SMTP (won't send emails but won't crash)
+    sed -i 's/SMTP_HOST=127.0.0.1/SMTP_HOST=localhost/g' /home/ubuntu/outline/.env
+    sed -i 's/SMTP_PORT=1025/SMTP_PORT=25/g' /home/ubuntu/outline/.env
+    
+    echo "⚠️  Email login disabled temporarily"
+    echo "You'll need to use a different authentication method"
+fi
+
+echo ""
+echo "🔄 Restarting services..."
+dinitctl restart outline 2>/dev/null || echo "Outline service not running"
+
+echo "✅ Fix completed!"

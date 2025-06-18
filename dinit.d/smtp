@@ -1,5 +1,5 @@
 type = process
-command = /usr/local/bin/local-smtp-server
+command = /usr/local/bin/simple-smtp-server
 restart = true
 run-as = ubuntu
 depends-on = outline

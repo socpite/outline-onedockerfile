@@ -1,0 +1,115 @@
+#!/usr/bin/env node
+// Simple SMTP server using only Node.js built-in modules
+
+const net = require('net');
+const fs = require('fs');
+
+const PORT = 1025;
+const HOST = '127.0.0.1';
+
+console.log('🚀 Simple SMTP Server Started (No Dependencies)');
+console.log(`📧 Listening on: ${HOST}:${PORT}`);
+console.log('📝 All emails will be logged here instead of being sent');
+console.log('🔗 Look for login links in the captured emails');
+console.log('-'.repeat(50));
+
+const server = net.createServer((socket) => {
+    console.log(`📧 SMTP Connection from ${socket.remoteAddress}`);
+    
+    let emailData = '';
+    let inDataMode = false;
+    
+    // Send initial greeting
+    socket.write('220 localhost Simple SMTP Server\r\n');
+    
+    socket.on('data', (data) => {
+        const lines = data.toString().split('\r\n');
+        
+        for (const line of lines) {
+            if (!line.trim()) continue;
+            
+            console.log(`< ${line}`);
+            
+            if (inDataMode) {
+                if (line === '.') {
+                    // End of email data
+                    inDataMode = false;
+                    
+                    console.log('\n' + '='.repeat(80));
+                    console.log('📧 NEW EMAIL CAPTURED');
+                    console.log('='.repeat(80));
+                    console.log(`Date: ${new Date().toISOString()}`);
+                    console.log('-'.repeat(80));
+                    
+                    // Extract login links
+                    const linkRegex = /https?:\/\/[^\s]+/g;
+                    const links = emailData.match(linkRegex) || [];
+                    
+                    if (links.length > 0) {
+                        console.log('🔗 LOGIN LINKS FOUND:');
+                        links.forEach((link, index) => {
+                            console.log(`   ${index + 1}. ${link}`);
+                        });
+                    }
+                    
+                    console.log('-'.repeat(80));
+                    console.log('📄 EMAIL CONTENT:');
+                    console.log(emailData);
+                    console.log('='.repeat(80) + '\n');
+                    
+                    socket.write('250 OK Message accepted\r\n');
+                    emailData = '';
+                } else {
+                    emailData += line + '\n';
+                }
+            } else {
+                // Handle SMTP commands
+                const cmd = line.toUpperCase();
+                
+                if (cmd.startsWith('HELO') || cmd.startsWith('EHLO')) {
+                    socket.write('250 Hello\r\n');
+                } else if (cmd.startsWith('MAIL FROM:')) {
+                    const from = line.substring(10).trim();
+                    console.log(`📤 Mail from: ${from}`);
+                    socket.write('250 OK\r\n');
+                } else if (cmd.startsWith('RCPT TO:')) {
+                    const to = line.substring(8).trim();
+                    console.log(`📥 Mail to: ${to}`);
+                    socket.write('250 OK\r\n');
+                } else if (cmd === 'DATA') {
+                    socket.write('354 Start mail input; end with <CRLF>.<CRLF>\r\n');
+                    inDataMode = true;
+                } else if (cmd === 'QUIT') {
+                    socket.write('221 Bye\r\n');
+                    socket.end();
+                } else {
+                    socket.write('250 OK\r\n');
+                }
+            }
+        }
+    });
+    
+    socket.on('error', (err) => {
+        console.error('Socket error:', err.message);
+    });
+    
+    socket.on('close', () => {
+        console.log('📧 SMTP Connection closed');
+    });
+});
+
+server.listen(PORT, HOST, () => {
+    console.log(`✅ Server ready on ${HOST}:${PORT}`);
+});
+
+server.on('error', (err) => {
+    console.error('SMTP Server Error:', err);
+});
+
+process.on('SIGINT', () => {
+    console.log('\n📧 Stopping SMTP server...');
+    server.close(() => {
+        console.log('✅ SMTP server stopped');
+        process.exit(0);
+    });
+});
