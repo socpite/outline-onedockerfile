@@ -1,0 +1,37 @@
+#!/bin/bash
+# Test the local SMTP server
+
+echo "🧪 Testing local SMTP server..."
+
+# Check if SMTP server is running
+if ! nc -z 127.0.0.1 1025 2>/dev/null; then
+    echo "❌ SMTP server not running on port 1025"
+    echo "Starting SMTP server..."
+    /usr/local/bin/local-smtp-server &
+    sleep 3
+fi
+
+# Send a test email
+echo "📧 Sending test email..."
+
+cat << 'EOF' | nc 127.0.0.1 1025
+HELO localhost
+MAIL FROM: test@outline.local
+RCPT TO: user@example.com
+DATA
+From: test@outline.local
+To: user@example.com
+Subject: Test Email from Outline
+
+This is a test email to verify the local SMTP server is working.
+
+Login link: http://localhost:3000/auth/email.callback?token=test-token-123
+
+Best regards,
+Outline Local SMTP Server
+.
+QUIT
+EOF
+
+echo "✅ Test email sent!"
+echo "Check the SMTP server logs to see if it was received."

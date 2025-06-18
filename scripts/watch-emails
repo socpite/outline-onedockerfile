@@ -1,0 +1,13 @@
+#!/bin/bash
+# Watch SMTP server logs for email login links
+
+echo "📧 Watching for email login links..."
+echo "When you try to log in, the login link will appear here"
+echo "Press Ctrl+C to stop"
+echo ""
+
+# Follow the SMTP server logs
+tail -f /var/log/dinit/smtp.log 2>/dev/null || {
+    echo "SMTP log not found, trying to start SMTP server..."
+    /usr/local/bin/local-smtp-server
+}

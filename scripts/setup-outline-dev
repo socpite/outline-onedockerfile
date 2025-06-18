@@ -40,12 +40,12 @@ LOG_LEVEL=debug
 
 # Enable Email Authentication
 ENABLED_PLUGINS=email
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
-SMTP_USERNAME=test@example.com
-SMTP_PASSWORD=test
-SMTP_FROM_EMAIL=noreply@example.com
-SMTP_REPLY_EMAIL=support@example.com
+SMTP_HOST=127.0.0.1
+SMTP_PORT=1025
+SMTP_USERNAME=
+SMTP_PASSWORD=
+SMTP_FROM_EMAIL=noreply@outline.local
+SMTP_REPLY_EMAIL=support@outline.local
 SMTP_SECURE=false
 ENVEOF
 
@@ -64,12 +64,12 @@ LOG_LEVEL=info
 
 # Enable Email Authentication
 ENABLED_PLUGINS=email
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
+SMTP_HOST=127.0.0.1
+SMTP_PORT=1025
 SMTP_USERNAME=production@example.com
 SMTP_PASSWORD=change-this-password
-SMTP_FROM_EMAIL=noreply@example.com
-SMTP_REPLY_EMAIL=support@example.com
+SMTP_FROM_EMAIL=noreply@outline.local
+SMTP_REPLY_EMAIL=support@outline.local
 SMTP_SECURE=true
 PRODENVEOF
 
@@ -92,7 +92,7 @@ NODE_ENV=test
 DATABASE_URL=postgres://outline:outline_password@127.0.0.1:5432/outline-test
 SECRET_KEY=F0E5AD933D7F6FD8F4DBB3E038C501C052DC0593C686D21ACB30AE205D2F634B
 
-SMTP_HOST=smtp.example.com
+SMTP_HOST=127.0.0.1
 SMTP_USERNAME=test
 SMTP_FROM_EMAIL=hello@example.com
 SMTP_REPLY_EMAIL=hello@example.com
@@ -152,12 +152,12 @@ LOG_LEVEL=debug
 
 # Enable Email Authentication
 ENABLED_PLUGINS=email
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
-SMTP_USERNAME=test@example.com
-SMTP_PASSWORD=test
-SMTP_FROM_EMAIL=noreply@example.com
-SMTP_REPLY_EMAIL=support@example.com
+SMTP_HOST=127.0.0.1
+SMTP_PORT=1025
+SMTP_USERNAME=
+SMTP_PASSWORD=
+SMTP_FROM_EMAIL=noreply@outline.local
+SMTP_REPLY_EMAIL=support@outline.local
 SMTP_SECURE=false
 ENVEOF
 
@@ -192,12 +192,12 @@ LOG_LEVEL=info
 
 # Enable Email Authentication
 ENABLED_PLUGINS=email
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
+SMTP_HOST=127.0.0.1
+SMTP_PORT=1025
 SMTP_USERNAME=production@example.com
 SMTP_PASSWORD=change-this-password
-SMTP_FROM_EMAIL=noreply@example.com
-SMTP_REPLY_EMAIL=support@example.com
+SMTP_FROM_EMAIL=noreply@outline.local
+SMTP_REPLY_EMAIL=support@outline.local
 SMTP_SECURE=true
 PRODENVEOF
 
@@ -224,7 +224,7 @@ NODE_ENV=test
 DATABASE_URL=postgres://outline:outline_password@127.0.0.1:5432/outline-test
 SECRET_KEY=F0E5AD933D7F6FD8F4DBB3E038C501C052DC0593C686D21ACB30AE205D2F634B
 
-SMTP_HOST=smtp.example.com
+SMTP_HOST=127.0.0.1
 SMTP_USERNAME=test
 SMTP_FROM_EMAIL=hello@example.com
 SMTP_REPLY_EMAIL=hello@example.com

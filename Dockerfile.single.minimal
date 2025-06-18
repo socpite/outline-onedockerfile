@@ -46,7 +46,8 @@ WORKDIR /home/ubuntu/outline
 RUN git clone https://github.com/outline/outline.git . && \
     chmod -R 777 /home/ubuntu/outline && \
     yarn config set registry https://registry.npmjs.org && \
-    yarn install --network-timeout 1000000 
+    yarn install --network-timeout 1000000 && \
+    yarn add smtp-server mailparser 
 
 # Copy configuration files
 COPY dinit.d/ /etc/dinit.d/

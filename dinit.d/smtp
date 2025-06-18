@@ -1,0 +1,6 @@
+type = process
+command = /usr/local/bin/local-smtp-server
+restart = true
+run-as = ubuntu
+depends-on = outline
+logfile = /var/log/dinit/smtp.log

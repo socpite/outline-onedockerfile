@@ -1,0 +1,99 @@
+#!/usr/bin/env node
+// Simple SMTP server that logs emails instead of sending them
+
+const SMTPServer = require('smtp-server').SMTPServer;
+const simpleParser = require('mailparser').simpleParser;
+
+const server = new SMTPServer({
+    secure: false,
+    authOptional: true,
+    allowInsecureAuth: true,
+    hideSTARTTLS: true,
+    
+    onConnect(session, callback) {
+        console.log(`📧 SMTP Connection from ${session.remoteAddress}`);
+        return callback();
+    },
+    
+    onMailFrom(address, session, callback) {
+        console.log(`📤 Mail from: ${address.address}`);
+        return callback();
+    },
+    
+    onRcptTo(address, session, callback) {
+        console.log(`📥 Mail to: ${address.address}`);
+        return callback();
+    },
+    
+    onData(stream, session, callback) {
+        let emailData = '';
+        
+        stream.on('data', (chunk) => {
+            emailData += chunk;
+        });
+        
+        stream.on('end', () => {
+            simpleParser(emailData)
+                .then(parsed => {
+                    console.log('\n' + '='.repeat(80));
+                    console.log('📧 NEW EMAIL CAPTURED');
+                    console.log('='.repeat(80));
+                    console.log(`From: ${parsed.from?.text || 'Unknown'}`);
+                    console.log(`To: ${parsed.to?.text || 'Unknown'}`);
+                    console.log(`Subject: ${parsed.subject || 'No Subject'}`);
+                    console.log(`Date: ${new Date().toISOString()}`);
+                    console.log('-'.repeat(80));
+                    
+                    // Extract login link from email content
+                    const textContent = parsed.text || '';
+                    const htmlContent = parsed.html || '';
+                    
+                    // Look for login links
+                    const linkRegex = /https?:\/\/[^\s]+/g;
+                    const textLinks = textContent.match(linkRegex) || [];
+                    const htmlLinks = htmlContent.match(linkRegex) || [];
+                    const allLinks = [...new Set([...textLinks, ...htmlLinks])];
+                    
+                    if (allLinks.length > 0) {
+                        console.log('🔗 LOGIN LINKS FOUND:');
+                        allLinks.forEach((link, index) => {
+                            console.log(`   ${index + 1}. ${link}`);
+                        });
+                    }
+                    
+                    console.log('-'.repeat(80));
+                    console.log('📄 EMAIL CONTENT:');
+                    console.log(textContent || htmlContent || 'No content');
+                    console.log('='.repeat(80) + '\n');
+                    
+                    callback();
+                })
+                .catch(err => {
+                    console.error('Error parsing email:', err);
+                    callback();
+                });
+        });
+    }
+});
+
+const PORT = 1025;
+
+server.listen(PORT, '127.0.0.1', () => {
+    console.log('🚀 Local SMTP Server Started');
+    console.log(`📧 Listening on: 127.0.0.1:${PORT}`);
+    console.log('📝 All emails will be logged here instead of being sent');
+    console.log('🔗 Look for login links in the captured emails');
+    console.log('-'.repeat(50));
+});
+
+server.on('error', (err) => {
+    console.error('SMTP Server Error:', err);
+});
+
+process.on('SIGINT', () => {
+    console.log('\n📧 Stopping SMTP server...');
+    server.close(() => {
+        console.log('✅ SMTP server stopped');
+        process.exit(0);
+    });
+});
