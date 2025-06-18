@@ -1,5 +1,5 @@
 type = process
-command = /usr/local/bin/simple-smtp-server
+command = /bin/bash -c "cd /home/ubuntu/outline && export NODE_PATH=/home/ubuntu/outline/node_modules && exec node /usr/local/bin/local-smtp-server"
 working-dir = /home/ubuntu/outline
 restart = true
 run-as = ubuntu

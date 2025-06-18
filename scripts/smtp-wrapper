@@ -1,0 +1,6 @@
+#!/bin/bash
+# Wrapper script to run local-smtp-server with correct NODE_PATH
+
+cd /home/ubuntu/outline
+export NODE_PATH=/home/ubuntu/outline/node_modules
+exec node /usr/local/bin/local-smtp-server
