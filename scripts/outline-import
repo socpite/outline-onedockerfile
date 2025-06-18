@@ -66,8 +66,8 @@ check_dependencies() {
     fi
     
     if [[ -f "$IMPORT_DIR/workspace.json" ]]; then
-        if ! command -v node &> /dev/null; then
-            error "node not found. Please install Node.js for JSON import."
+        if ! command -v jq &> /dev/null; then
+            error "jq not found. Please install jq for JSON import."
         fi
     fi
 }
@@ -189,84 +189,62 @@ import_database_json() {
     
     log "Importing database from JSON: $json_file"
     
-    # Create a Node.js script to import data
-    cat > "$IMPORT_DIR/import_script.js" << 'EOF'
-const { Sequelize, DataTypes } = require('sequelize');
-const fs = require('fs');
-
-async function importData() {
-    const sequelize = new Sequelize(process.env.DATABASE_URL, {
-        dialect: 'postgres',
-        logging: false
-    });
-
-    try {
-        await sequelize.authenticate();
-        console.log('Connected to database');
-
-        const data = JSON.parse(fs.readFileSync('workspace.json', 'utf8'));
-        console.log('Loaded export data from', data.exportedAt);
-
-        // Import in dependency order
-        const tables = [
-            'teams', 'users', 'collections', 'groups', 'documents', 
-            'attachments', 'shares', 'stars', 'pins', 'views', 
-            'memberships', 'group_users'
-        ];
-
-        for (const table of tables) {
-            if (data[table] && data[table].length > 0) {
-                console.log(`Importing ${data[table].length} records to ${table}...`);
-                
-                // Clear existing data if any
-                await sequelize.query(`TRUNCATE TABLE ${table} CASCADE`);
-                
-                // Insert new data
-                for (const record of data[table]) {
-                    const columns = Object.keys(record).join(', ');
-                    const values = Object.values(record).map(v => 
-                        v === null ? 'NULL' : `'${String(v).replace(/'/g, "''")}'`
-                    ).join(', ');
-                    
-                    await sequelize.query(
-                        `INSERT INTO ${table} (${columns}) VALUES (${values})`
-                    );
-                }
-                
-                console.log(`✓ Imported ${table}`);
-            }
-        }
-
-        console.log('Import completed successfully');
-        
-    } catch (error) {
-        console.error('Import failed:', error);
-        process.exit(1);
-    } finally {
-        await sequelize.close();
-    }
-}
-
-importData();
-EOF
-
-    # Run the script from the Outline directory where node_modules exists
-    local original_dir=$(pwd)
-    cd /home/ubuntu/outline
-    
-    # Copy the JSON file to the current directory temporarily
-    cp "$json_file" "./workspace.json"
-    
-    if node "$IMPORT_DIR/import_script.js"; then
-        rm "./workspace.json"
-        rm "$IMPORT_DIR/import_script.js"
-        cd "$original_dir"
-        success "Database imported from JSON"
-    else
-        rm "./workspace.json" 2>/dev/null || true
-        cd "$original_dir"
-        error "JSON import script failed"
+    # Check if jq is available for JSON parsing
+    if ! command -v jq &> /dev/null; then
+        error "jq is required for JSON import. Please install jq."
     fi
+    
+    # Import in dependency order
+    local tables=("teams" "users" "collections" "groups" "documents" "attachments" "shares" "stars" "pins" "views" "memberships" "group_users")
+    
+    for table in "${tables[@]}"; do
+        log "Processing table: $table"
+        
+        # Extract table data from JSON
+        local table_data=$(jq -r ".$table // []" "$json_file" 2>/dev/null)
+        
+        if [[ "$table_data" == "[]" || "$table_data" == "null" ]]; then
+            log "No data found for table: $table"
+            continue
+        fi
+        
+        # Count records
+        local record_count=$(echo "$table_data" | jq '. | length' 2>/dev/null || echo "0")
+        
+        if [[ "$record_count" -gt 0 ]]; then
+            log "Importing $record_count records to $table..."
+            
+            # Clear existing data if force mode
+            if [[ "$FORCE" == true ]]; then
+                psql "$DATABASE_URL" -c "TRUNCATE TABLE $table CASCADE;" &>/dev/null || true
+            fi
+            
+            # Create temporary SQL file for this table
+            local temp_sql="/tmp/import_${table}.sql"
+            
+            # Generate INSERT statements
+            echo "$table_data" | jq -r '.[] | 
+                "INSERT INTO '"$table"' (" + 
+                (keys | join(", ")) + 
+                ") VALUES (" + 
+                ([.[] | if type == "string" then "'"'"'" + gsub("'"'"'"; "'"'"''"'"'") + "'"'"'" elif . == null then "NULL" else tostring end] | join(", ")) + 
+                ");"' > "$temp_sql" 2>/dev/null
+            
+            if [[ -s "$temp_sql" ]]; then
+                if psql "$DATABASE_URL" -f "$temp_sql" &>/dev/null; then
+                    success "✓ Imported $table ($record_count records)"
+                else
+                    warn "Failed to import some records in $table"
+                fi
+            else
+                warn "No valid SQL generated for $table"
+            fi
+            
+            rm -f "$temp_sql"
+        fi
+    done
+    
+    success "Database imported from JSON"
 }
 
 import_files() {

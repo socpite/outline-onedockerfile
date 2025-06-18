@@ -64,12 +64,6 @@ check_dependencies() {
     if ! command -v pg_dump &> /dev/null; then
         error "pg_dump not found. Please install PostgreSQL client."
     fi
-    
-    if [[ "$FORMAT" == "json" || "$FORMAT" == "both" ]]; then
-        if ! command -v node &> /dev/null; then
-            error "node not found. Please install Node.js."
-        fi
-    fi
 }
 
 check_database_connection() {
@@ -100,86 +94,49 @@ export_database_json() {
     local json_file="$EXPORT_DIR/workspace.json"
     log "Exporting database to JSON: $json_file"
     
-    # Create a Node.js script to export data
-    cat > "$EXPORT_DIR/export_script.js" << 'EOF'
-const { Sequelize } = require('sequelize');
-const fs = require('fs');
-
-async function exportData() {
-    const sequelize = new Sequelize(process.env.DATABASE_URL, {
-        dialect: 'postgres',
-        logging: false
-    });
-
-    try {
-        await sequelize.authenticate();
-        console.log('Connected to database');
-
-        const [teams] = await sequelize.query('SELECT * FROM teams');
-        const [users] = await sequelize.query('SELECT * FROM users');
-        const [collections] = await sequelize.query('SELECT * FROM collections');
-        const [documents] = await sequelize.query('SELECT * FROM documents');
-        const [attachments] = await sequelize.query('SELECT * FROM attachments');
-        const [shares] = await sequelize.query('SELECT * FROM shares');
-        const [stars] = await sequelize.query('SELECT * FROM stars');
-        const [pins] = await sequelize.query('SELECT * FROM pins');
-        const [views] = await sequelize.query('SELECT * FROM views');
-        const [memberships] = await sequelize.query('SELECT * FROM memberships');
-        const [groups] = await sequelize.query('SELECT * FROM groups');
-        const [group_users] = await sequelize.query('SELECT * FROM group_users');
-
-        const exportData = {
-            version: '1.0',
-            exportedAt: new Date().toISOString(),
-            teams,
-            users,
-            collections,
-            documents,
-            attachments,
-            shares,
-            stars,
-            pins,
-            views,
-            memberships,
-            groups,
-            group_users
-        };
-
-        fs.writeFileSync('workspace.json', JSON.stringify(exportData, null, 2));
-        console.log('Export completed successfully');
-        
-    } catch (error) {
-        console.error('Export failed:', error);
-        process.exit(1);
-    } finally {
-        await sequelize.close();
-    }
-}
-
-exportData();
-EOF
-
-    # Run the script from the Outline directory where node_modules exists
-    local original_dir=$(pwd)
-    cd /home/ubuntu/outline
+    # Use psql to export data as JSON directly
+    log "Exporting tables to JSON using psql..."
     
-    if node "$EXPORT_DIR/export_script.js"; then
-        # Move the generated file to the export directory
-        if [[ -f "workspace.json" ]]; then
-            mv "workspace.json" "$json_file"
-        fi
-        rm "$EXPORT_DIR/export_script.js"
-        cd "$original_dir"
+    cat > "$json_file" << 'EOF'
+{
+  "version": "1.0",
+  "exportedAt": "
+EOF
+    
+    echo "$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> "$json_file"
+    echo '",' >> "$json_file"
+    
+    # Export each table as JSON
+    local tables=("teams" "users" "collections" "documents" "attachments" "shares" "stars" "pins" "views" "memberships" "groups" "group_users")
+    
+    for i in "${!tables[@]}"; do
+        local table="${tables[$i]}"
+        log "Exporting table: $table"
         
-        if [[ -f "$json_file" ]]; then
-            local size=$(du -h "$json_file" | cut -f1)
-            success "Database exported to JSON ($size)"
+        echo "  \"$table\": " >> "$json_file"
+        
+        # Export table data as JSON array
+        if psql "$DATABASE_URL" -t -c "SELECT COALESCE(json_agg(row_to_json($table.*)), '[]'::json) FROM $table;" >> "$json_file" 2>/dev/null; then
+            # Add comma if not the last table
+            if [[ $i -lt $((${#tables[@]} - 1)) ]]; then
+                echo "," >> "$json_file"
+            fi
         else
-            error "Failed to export database to JSON"
+            warn "Failed to export table: $table"
+            echo "[]" >> "$json_file"
+            if [[ $i -lt $((${#tables[@]} - 1)) ]]; then
+                echo "," >> "$json_file"
+            fi
         fi
+    done
+    
+    echo "}" >> "$json_file"
+    
+    if [[ -f "$json_file" ]]; then
+        local size=$(du -h "$json_file" | cut -f1)
+        success "Database exported to JSON ($size)"
     else
-        cd "$original_dir"
-        error "JSON export script failed"
+        error "Failed to export database to JSON"
     fi
 }
 
