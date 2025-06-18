@@ -1,0 +1,361 @@
+#!/bin/bash
+# Outline Export Script
+# Exports complete Outline workspace to a folder
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+EXPORT_DIR=""
+INCLUDE_FILES=true
+FORMAT="json"
+VERBOSE=false
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+usage() {
+    echo "Usage: $0 [OPTIONS]"
+    echo ""
+    echo "Export Outline workspace data"
+    echo ""
+    echo "Options:"
+    echo "  -d, --dir DIR          Export directory (required)"
+    echo "  -f, --format FORMAT    Export format: json, sql, both (default: json)"
+    echo "  --no-files            Skip file attachments export"
+    echo "  -v, --verbose         Verbose output"
+    echo "  -h, --help            Show this help"
+    echo ""
+    echo "Examples:"
+    echo "  $0 -d /tmp/outline-export"
+    echo "  $0 -d ./backup --format both --verbose"
+    echo "  $0 -d ./backup --no-files"
+}
+
+log() {
+    if [[ "$VERBOSE" == true ]]; then
+        echo -e "${BLUE}[INFO]${NC} $1"
+    fi
+}
+
+success() {
+    echo -e "${GREEN}[SUCCESS]${NC} $1"
+}
+
+warn() {
+    echo -e "${YELLOW}[WARN]${NC} $1"
+}
+
+error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+    exit 1
+}
+
+check_dependencies() {
+    log "Checking dependencies..."
+    
+    if ! command -v psql &> /dev/null; then
+        error "psql not found. Please install PostgreSQL client."
+    fi
+    
+    if ! command -v pg_dump &> /dev/null; then
+        error "pg_dump not found. Please install PostgreSQL client."
+    fi
+    
+    if [[ "$FORMAT" == "json" || "$FORMAT" == "both" ]]; then
+        if ! command -v node &> /dev/null; then
+            error "node not found. Please install Node.js."
+        fi
+    fi
+}
+
+check_database_connection() {
+    log "Checking database connection..."
+    
+    if ! psql "$DATABASE_URL" -c "SELECT 1;" &> /dev/null; then
+        error "Cannot connect to database. Check DATABASE_URL environment variable."
+    fi
+    
+    success "Database connection verified"
+}
+
+export_database_sql() {
+    local sql_file="$EXPORT_DIR/database.sql"
+    log "Exporting database to SQL: $sql_file"
+    
+    pg_dump "$DATABASE_URL" > "$sql_file"
+    
+    if [[ -f "$sql_file" ]]; then
+        local size=$(du -h "$sql_file" | cut -f1)
+        success "Database exported to SQL ($size)"
+    else
+        error "Failed to export database to SQL"
+    fi
+}
+
+export_database_json() {
+    local json_file="$EXPORT_DIR/workspace.json"
+    log "Exporting database to JSON: $json_file"
+    
+    # Create a Node.js script to export data
+    cat > "$EXPORT_DIR/export_script.js" << 'EOF'
+const { Sequelize } = require('sequelize');
+const fs = require('fs');
+
+async function exportData() {
+    const sequelize = new Sequelize(process.env.DATABASE_URL, {
+        dialect: 'postgres',
+        logging: false
+    });
+
+    try {
+        await sequelize.authenticate();
+        console.log('Connected to database');
+
+        const [teams] = await sequelize.query('SELECT * FROM teams');
+        const [users] = await sequelize.query('SELECT * FROM users');
+        const [collections] = await sequelize.query('SELECT * FROM collections');
+        const [documents] = await sequelize.query('SELECT * FROM documents');
+        const [attachments] = await sequelize.query('SELECT * FROM attachments');
+        const [shares] = await sequelize.query('SELECT * FROM shares');
+        const [stars] = await sequelize.query('SELECT * FROM stars');
+        const [pins] = await sequelize.query('SELECT * FROM pins');
+        const [views] = await sequelize.query('SELECT * FROM views');
+        const [memberships] = await sequelize.query('SELECT * FROM memberships');
+        const [groups] = await sequelize.query('SELECT * FROM groups');
+        const [group_users] = await sequelize.query('SELECT * FROM group_users');
+
+        const exportData = {
+            version: '1.0',
+            exportedAt: new Date().toISOString(),
+            teams,
+            users,
+            collections,
+            documents,
+            attachments,
+            shares,
+            stars,
+            pins,
+            views,
+            memberships,
+            groups,
+            group_users
+        };
+
+        fs.writeFileSync('workspace.json', JSON.stringify(exportData, null, 2));
+        console.log('Export completed successfully');
+        
+    } catch (error) {
+        console.error('Export failed:', error);
+        process.exit(1);
+    } finally {
+        await sequelize.close();
+    }
+}
+
+exportData();
+EOF
+
+    cd "$EXPORT_DIR"
+    if node export_script.js; then
+        rm export_script.js
+        if [[ -f "$json_file" ]]; then
+            local size=$(du -h "$json_file" | cut -f1)
+            success "Database exported to JSON ($size)"
+        else
+            error "Failed to export database to JSON"
+        fi
+    else
+        error "JSON export script failed"
+    fi
+}
+
+export_files() {
+    if [[ "$INCLUDE_FILES" != true ]]; then
+        log "Skipping file attachments export"
+        return
+    fi
+    
+    local files_dir="$EXPORT_DIR/files"
+    log "Exporting file attachments to: $files_dir"
+    
+    # Default file storage location
+    local storage_dir="/var/lib/outline/data"
+    
+    if [[ ! -d "$storage_dir" ]]; then
+        warn "File storage directory not found: $storage_dir"
+        return
+    fi
+    
+    mkdir -p "$files_dir"
+    
+    if cp -r "$storage_dir"/* "$files_dir"/ 2>/dev/null; then
+        local size=$(du -sh "$files_dir" | cut -f1)
+        success "Files exported ($size)"
+    else
+        warn "No files found to export or copy failed"
+    fi
+}
+
+create_metadata() {
+    local metadata_file="$EXPORT_DIR/export_metadata.json"
+    log "Creating export metadata: $metadata_file"
+    
+    cat > "$metadata_file" << EOF
+{
+    "version": "1.0",
+    "exportedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+    "exportedBy": "outline-export-cli",
+    "format": "$FORMAT",
+    "includeFiles": $INCLUDE_FILES,
+    "databaseUrl": "$(echo "$DATABASE_URL" | sed 's/:[^:]*@/:***@/')",
+    "hostname": "$(hostname)",
+    "outlineVersion": "$(node -p "require('/home/ubuntu/outline/package.json').version" 2>/dev/null || echo 'unknown')"
+}
+EOF
+    
+    success "Export metadata created"
+}
+
+create_readme() {
+    local readme_file="$EXPORT_DIR/README.md"
+    log "Creating README: $readme_file"
+    
+    cat > "$readme_file" << EOF
+# Outline Export
+
+This directory contains a complete export of an Outline workspace.
+
+## Export Details
+
+- **Exported At**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
+- **Format**: $FORMAT
+- **Include Files**: $INCLUDE_FILES
+
+## Contents
+
+EOF
+
+    if [[ "$FORMAT" == "sql" || "$FORMAT" == "both" ]]; then
+        echo "- \`database.sql\` - Complete database dump" >> "$readme_file"
+    fi
+    
+    if [[ "$FORMAT" == "json" || "$FORMAT" == "both" ]]; then
+        echo "- \`workspace.json\` - Structured workspace data" >> "$readme_file"
+    fi
+    
+    if [[ "$INCLUDE_FILES" == true ]]; then
+        echo "- \`files/\` - File attachments and uploads" >> "$readme_file"
+    fi
+    
+    cat >> "$readme_file" << EOF
+- \`export_metadata.json\` - Export metadata and settings
+- \`README.md\` - This file
+
+## Import
+
+To import this data into another Outline instance, use:
+
+\`\`\`bash
+outline-import -d $(basename "$EXPORT_DIR")
+\`\`\`
+
+## Manual Import
+
+### Database (SQL)
+\`\`\`bash
+psql \$DATABASE_URL < database.sql
+\`\`\`
+
+### Files
+\`\`\`bash
+cp -r files/* /var/lib/outline/data/
+\`\`\`
+EOF
+    
+    success "README created"
+}
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        -d|--dir)
+            EXPORT_DIR="$2"
+            shift 2
+            ;;
+        -f|--format)
+            FORMAT="$2"
+            shift 2
+            ;;
+        --no-files)
+            INCLUDE_FILES=false
+            shift
+            ;;
+        -v|--verbose)
+            VERBOSE=true
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            error "Unknown option: $1"
+            ;;
+    esac
+done
+
+# Validate arguments
+if [[ -z "$EXPORT_DIR" ]]; then
+    error "Export directory is required. Use -d or --dir option."
+fi
+
+if [[ "$FORMAT" != "json" && "$FORMAT" != "sql" && "$FORMAT" != "both" ]]; then
+    error "Invalid format: $FORMAT. Use json, sql, or both."
+fi
+
+# Check for DATABASE_URL
+if [[ -z "$DATABASE_URL" ]]; then
+    error "DATABASE_URL environment variable is required."
+fi
+
+# Main execution
+echo "🚀 Starting Outline export..."
+echo "📁 Export directory: $EXPORT_DIR"
+echo "📋 Format: $FORMAT"
+echo "📎 Include files: $INCLUDE_FILES"
+echo ""
+
+check_dependencies
+check_database_connection
+
+# Create export directory
+mkdir -p "$EXPORT_DIR"
+log "Created export directory: $EXPORT_DIR"
+
+# Export based on format
+if [[ "$FORMAT" == "sql" || "$FORMAT" == "both" ]]; then
+    export_database_sql
+fi
+
+if [[ "$FORMAT" == "json" || "$FORMAT" == "both" ]]; then
+    export_database_json
+fi
+
+# Export files
+export_files
+
+# Create metadata and documentation
+create_metadata
+create_readme
+
+echo ""
+success "Export completed successfully!"
+echo "📁 Export location: $EXPORT_DIR"
+echo "📊 Export size: $(du -sh "$EXPORT_DIR" | cut -f1)"
+echo ""
+echo "To import this data, use:"
+echo "  outline-import -d $EXPORT_DIR"
