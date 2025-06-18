@@ -2,6 +2,7 @@ type = process
 command = /usr/local/bin/start-smtp-server
 working-dir = /home/ubuntu/outline
 restart = true
+restart-delay = 5
 run-as = ubuntu
 depends-on = outline-setup
 logfile = /var/log/dinit/smtp.log
