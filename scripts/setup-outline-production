@@ -3,6 +3,12 @@ set -e
 
 echo "🚀 Setting up Outline for production..."
 
+# Check if already set up
+if [ -f /home/ubuntu/outline/.env ] && [ -d /home/ubuntu/outline/build ]; then
+    echo "✅ Production setup already complete!"
+    exit 0
+fi
+
 # Wait for PostgreSQL and Redis to be ready
 echo "⏳ Waiting for services to be ready..."
 for i in {1..60}; do
@@ -82,6 +88,9 @@ DATABASE_URL="postgres://outline:outline_password@127.0.0.1:5432/outline?sslmode
 echo "📋 Setting file ownership..."
 chown -R ubuntu:ubuntu /home/ubuntu/outline
 chown -R ubuntu:ubuntu /var/lib/outline
+
+# Create a marker file to indicate setup is complete
+touch /home/ubuntu/outline/.production-ready
 
 echo "✅ Production setup complete!"
 echo "🌐 Outline will be available at: http://localhost:3000"
