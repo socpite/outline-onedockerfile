@@ -1,5 +1,5 @@
 type = process
-command = /usr/bin/redis-server --daemonize no --bind 127.0.0.1
+command = /usr/bin/redis-server /etc/redis/redis.conf
 run-as = redis
 restart = true
 logfile = /var/log/dinit/redis.log

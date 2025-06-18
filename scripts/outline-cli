@@ -18,24 +18,26 @@ usage() {
     echo "Usage: $0 <command> [options]"
     echo ""
     echo "Commands:"
-    echo "  export       Export Outline workspace (direct database)"
-    echo "  api-export   Export via Outline API (like web UI)"
-    echo "  import       Import Outline workspace"
+    echo "  export       Export Outline workspace (simple)"
+    echo "  export-full  Export with advanced options (bash version)"
+    echo "  import       Import Outline workspace (simple)"
+    echo "  import-full  Import with advanced options (bash version)"
+    echo "  api-export   Export via Outline API (requires token)"
     echo "  help         Show this help"
     echo ""
-    echo "Export Methods:"
-    echo "  export       - Direct database export (faster, requires DB access)"
-    echo "  api-export   - Uses Outline's API (requires API token)"
+    echo "Simple Commands (recommended):"
+    echo "  export <dir>           - Export to directory"
+    echo "  import <dir>           - Import from directory"
+    echo "  import <dir> --force   - Force import (overwrite data)"
     echo ""
     echo "Examples:"
-    echo "  $0 export -d /tmp/my-backup"
-    echo "  $0 api-export -t your-api-token -o /tmp/downloads"
-    echo "  $0 import -d /tmp/my-backup --force"
+    echo "  $0 export /tmp/my-backup"
+    echo "  $0 import /tmp/my-backup --force"
+    echo "  $0 api-export -t your-api-token"
     echo ""
-    echo "For command-specific help:"
-    echo "  $0 export --help"
-    echo "  $0 api-export --help"
-    echo "  $0 import --help"
+    echo "For advanced options:"
+    echo "  $0 export-full --help"
+    echo "  $0 import-full --help"
 }
 
 check_environment() {
@@ -62,17 +64,27 @@ case "${1:-}" in
     export)
         check_environment
         shift
+        exec "$SCRIPT_DIR/outline-export-simple" "$@"
+        ;;
+    export-full)
+        check_environment
+        shift
         exec "$SCRIPT_DIR/outline-export" "$@"
+        ;;
+    import)
+        check_environment
+        shift
+        exec "$SCRIPT_DIR/outline-import-simple" "$@"
+        ;;
+    import-full)
+        check_environment
+        shift
+        exec "$SCRIPT_DIR/outline-import" "$@"
         ;;
     api-export)
         # API export doesn't need database access
         shift
         exec "$SCRIPT_DIR/outline-api-export" "$@"
-        ;;
-    import)
-        check_environment
-        shift
-        exec "$SCRIPT_DIR/outline-import" "$@"
         ;;
     help|--help|-h)
         usage

@@ -1,0 +1,38 @@
+#!/bin/bash
+# Fix Redis permissions and configuration issues
+
+echo "🔧 Fixing Redis configuration..."
+
+# Fix Redis data directory permissions
+sudo chown -R redis:redis /var/lib/redis
+sudo chmod 755 /var/lib/redis
+
+# Fix Redis log directory permissions  
+sudo chown -R redis:redis /var/log/redis
+sudo chmod 755 /var/log/redis
+
+# Fix Redis config permissions
+sudo chown redis:redis /etc/redis/redis.conf
+sudo chmod 644 /etc/redis/redis.conf
+
+# Clear any problematic Redis data
+sudo rm -f /var/lib/redis/dump.rdb
+
+# Restart Redis
+echo "🔄 Restarting Redis..."
+sudo pkill redis-server || true
+sleep 2
+
+# Start Redis with proper config
+sudo -u redis /usr/bin/redis-server /etc/redis/redis.conf &
+
+sleep 3
+
+# Test Redis
+if redis-cli ping > /dev/null 2>&1; then
+    echo "✅ Redis is working!"
+    redis-cli info server | grep redis_version
+else
+    echo "❌ Redis is still not working"
+    echo "Check logs: tail /var/log/redis/redis.log"
+fi

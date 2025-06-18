@@ -1,0 +1,159 @@
+#!/usr/bin/env node
+// Simple Outline import script
+
+const { Sequelize } = require('sequelize');
+const fs = require('fs');
+const path = require('path');
+
+// Change to Outline directory to access node_modules
+process.chdir('/home/ubuntu/outline');
+
+const args = process.argv.slice(2);
+const importDir = args[0];
+const force = args.includes('--force');
+
+if (!importDir) {
+    console.error('Usage: outline-import-simple <import-directory> [--force]');
+    process.exit(1);
+}
+
+if (!process.env.DATABASE_URL) {
+    console.error('DATABASE_URL environment variable is required');
+    process.exit(1);
+}
+
+async function importData() {
+    const sequelize = new Sequelize(process.env.DATABASE_URL, {
+        dialect: 'postgres',
+        logging: false
+    });
+
+    try {
+        console.log('🔗 Connecting to database...');
+        await sequelize.authenticate();
+
+        // Check if data exists
+        const [existingTeams] = await sequelize.query('SELECT COUNT(*) as count FROM teams');
+        const [existingUsers] = await sequelize.query('SELECT COUNT(*) as count FROM users');
+        const [existingDocs] = await sequelize.query('SELECT COUNT(*) as count FROM documents');
+        
+        const hasData = existingTeams[0].count > 0 || existingUsers[0].count > 0 || existingDocs[0].count > 0;
+        
+        if (hasData && !force) {
+            console.log('⚠️  Existing data found:');
+            console.log(`   Teams: ${existingTeams[0].count}`);
+            console.log(`   Users: ${existingUsers[0].count}`);
+            console.log(`   Documents: ${existingDocs[0].count}`);
+            console.log('');
+            console.log('Use --force to overwrite existing data');
+            process.exit(1);
+        }
+
+        // Load export data
+        const jsonFile = path.join(importDir, 'workspace.json');
+        if (!fs.existsSync(jsonFile)) {
+            console.error('❌ workspace.json not found in import directory');
+            process.exit(1);
+        }
+
+        console.log('📊 Loading export data...');
+        const exportData = JSON.parse(fs.readFileSync(jsonFile, 'utf8'));
+        
+        console.log(`📅 Export from: ${exportData.exportedAt}`);
+        if (exportData.stats) {
+            console.log(`📊 Contains: ${exportData.stats.teams} teams, ${exportData.stats.users} users, ${exportData.stats.documents} documents`);
+        }
+
+        // Import in dependency order
+        const tables = [
+            'teams', 'users', 'collections', 'groups', 'documents', 
+            'attachments', 'shares', 'stars', 'pins', 'views', 
+            'memberships', 'group_users'
+        ];
+
+        console.log('🗃️  Importing database...');
+        
+        for (const table of tables) {
+            const data = exportData.data[table] || [];
+            
+            if (data.length === 0) {
+                console.log(`   ${table}: no data`);
+                continue;
+            }
+
+            console.log(`   ${table}: ${data.length} records`);
+            
+            // Clear existing data if force mode
+            if (force) {
+                await sequelize.query(`TRUNCATE TABLE ${table} CASCADE`);
+            }
+            
+            // Insert data in batches
+            const batchSize = 100;
+            for (let i = 0; i < data.length; i += batchSize) {
+                const batch = data.slice(i, i + batchSize);
+                
+                for (const record of batch) {
+                    const columns = Object.keys(record);
+                    const values = Object.values(record);
+                    
+                    const placeholders = values.map((_, index) => `$${index + 1}`).join(', ');
+                    const query = `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})`;
+                    
+                    try {
+                        await sequelize.query(query, {
+                            bind: values,
+                            type: sequelize.QueryTypes.INSERT
+                        });
+                    } catch (error) {
+                        console.warn(`     Warning: Failed to insert record in ${table}:`, error.message);
+                    }
+                }
+            }
+        }
+
+        // Import files
+        const filesSource = path.join(importDir, 'files');
+        const filesTarget = '/var/lib/outline/data';
+        
+        if (fs.existsSync(filesSource)) {
+            console.log('📎 Importing files...');
+            
+            // Create target directory
+            if (!fs.existsSync(filesTarget)) {
+                fs.mkdirSync(filesTarget, { recursive: true });
+            }
+            
+            fs.cpSync(filesSource, filesTarget, { recursive: true });
+            
+            // Fix permissions
+            try {
+                const { execSync } = require('child_process');
+                execSync(`chown -R ubuntu:ubuntu ${filesTarget}`);
+                execSync(`chmod -R 755 ${filesTarget}`);
+            } catch (error) {
+                console.warn('Warning: Could not fix file permissions');
+            }
+        }
+
+        console.log('✅ Import completed successfully!');
+        
+        // Show final stats
+        const [finalTeams] = await sequelize.query('SELECT COUNT(*) as count FROM teams');
+        const [finalUsers] = await sequelize.query('SELECT COUNT(*) as count FROM users');
+        const [finalDocs] = await sequelize.query('SELECT COUNT(*) as count FROM documents');
+        
+        console.log('📊 Final stats:');
+        console.log(`   Teams: ${finalTeams[0].count}`);
+        console.log(`   Users: ${finalUsers[0].count}`);
+        console.log(`   Documents: ${finalDocs[0].count}`);
+        
+    } catch (error) {
+        console.error('❌ Import failed:', error.message);
+        process.exit(1);
+    } finally {
+        await sequelize.close();
+    }
+}
+
+importData();

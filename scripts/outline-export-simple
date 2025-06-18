@@ -1,0 +1,142 @@
+#!/usr/bin/env node
+// Simple Outline export script
+
+const { Sequelize } = require('sequelize');
+const fs = require('fs');
+const path = require('path');
+
+// Change to Outline directory to access node_modules
+process.chdir('/home/ubuntu/outline');
+
+const args = process.argv.slice(2);
+const outputDir = args[0];
+
+if (!outputDir) {
+    console.error('Usage: outline-export-simple <output-directory>');
+    process.exit(1);
+}
+
+if (!process.env.DATABASE_URL) {
+    console.error('DATABASE_URL environment variable is required');
+    process.exit(1);
+}
+
+async function exportData() {
+    const sequelize = new Sequelize(process.env.DATABASE_URL, {
+        dialect: 'postgres',
+        logging: false
+    });
+
+    try {
+        console.log('🔗 Connecting to database...');
+        await sequelize.authenticate();
+
+        console.log('📊 Exporting data...');
+        
+        // Get all data
+        const [teams] = await sequelize.query('SELECT * FROM teams');
+        const [users] = await sequelize.query('SELECT * FROM users');
+        const [collections] = await sequelize.query('SELECT * FROM collections');
+        const [documents] = await sequelize.query('SELECT * FROM documents');
+        const [attachments] = await sequelize.query('SELECT * FROM attachments');
+        const [shares] = await sequelize.query('SELECT * FROM shares');
+        const [stars] = await sequelize.query('SELECT * FROM stars');
+        const [pins] = await sequelize.query('SELECT * FROM pins');
+        const [views] = await sequelize.query('SELECT * FROM views');
+        const [memberships] = await sequelize.query('SELECT * FROM memberships');
+        const [groups] = await sequelize.query('SELECT * FROM groups');
+        const [group_users] = await sequelize.query('SELECT * FROM group_users');
+
+        const exportData = {
+            version: '1.0',
+            exportedAt: new Date().toISOString(),
+            stats: {
+                teams: teams.length,
+                users: users.length,
+                collections: collections.length,
+                documents: documents.length,
+                attachments: attachments.length
+            },
+            data: {
+                teams,
+                users,
+                collections,
+                documents,
+                attachments,
+                shares,
+                stars,
+                pins,
+                views,
+                memberships,
+                groups,
+                group_users
+            }
+        };
+
+        // Create output directory
+        if (!fs.existsSync(outputDir)) {
+            fs.mkdirSync(outputDir, { recursive: true });
+        }
+
+        // Write JSON file
+        const jsonFile = path.join(outputDir, 'workspace.json');
+        fs.writeFileSync(jsonFile, JSON.stringify(exportData, null, 2));
+
+        // Copy files if they exist
+        const filesSource = '/var/lib/outline/data';
+        const filesTarget = path.join(outputDir, 'files');
+        
+        if (fs.existsSync(filesSource)) {
+            console.log('📎 Copying files...');
+            fs.cpSync(filesSource, filesTarget, { recursive: true });
+        }
+
+        // Create metadata
+        const metadata = {
+            exportedAt: new Date().toISOString(),
+            exportedBy: 'outline-export-simple',
+            version: '1.0',
+            stats: exportData.stats
+        };
+        
+        fs.writeFileSync(
+            path.join(outputDir, 'metadata.json'), 
+            JSON.stringify(metadata, null, 2)
+        );
+
+        // Create README
+        const readme = `# Outline Export
+
+Exported on: ${new Date().toISOString()}
+
+## Contents
+- workspace.json - All workspace data
+- files/ - File attachments
+- metadata.json - Export information
+
+## Stats
+- Teams: ${exportData.stats.teams}
+- Users: ${exportData.stats.users}
+- Collections: ${exportData.stats.collections}
+- Documents: ${exportData.stats.documents}
+- Attachments: ${exportData.stats.attachments}
+
+## Import
+To import: outline-import-simple <this-directory>
+`;
+        
+        fs.writeFileSync(path.join(outputDir, 'README.md'), readme);
+
+        console.log('✅ Export completed!');
+        console.log(`📁 Location: ${outputDir}`);
+        console.log(`📊 Stats: ${exportData.stats.teams} teams, ${exportData.stats.users} users, ${exportData.stats.documents} documents`);
+        
+    } catch (error) {
+        console.error('❌ Export failed:', error.message);
+        process.exit(1);
+    } finally {
+        await sequelize.close();
+    }
+}
+
+exportData();
