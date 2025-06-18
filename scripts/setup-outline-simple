@@ -1,0 +1,65 @@
+#!/bin/bash
+# Simple production setup - only database setup needed
+
+set -e
+
+echo "🚀 Setting up Outline database..."
+
+# Check if already set up
+if [ -f /home/ubuntu/outline/.production-ready ]; then
+    echo "✅ Production setup already complete!"
+    exit 0
+fi
+
+# Wait for PostgreSQL and Redis to be ready
+echo "⏳ Waiting for services to be ready..."
+for i in {1..60}; do
+    if sudo -u postgres pg_isready > /dev/null 2>&1 && redis-cli ping > /dev/null 2>&1; then
+        echo "✅ Services are ready!"
+        break
+    fi
+    echo "   Waiting for PostgreSQL and Redis... ($i/60)"
+    sleep 2
+done
+
+# Create outline user if it doesn't exist
+sudo -u postgres psql -tc "SELECT 1 FROM pg_user WHERE usename = 'outline'" | grep -q 1 || {
+    echo "📋 Creating outline user..."
+    sudo -u postgres psql -c "CREATE USER outline WITH PASSWORD 'outline_password';"
+}
+
+echo "📋 Granting user privileges..."
+sudo -u postgres psql -c "ALTER USER outline CREATEDB;"
+sudo -u postgres psql -c "ALTER USER outline CREATEROLE;"
+
+# Create database using yarn db:create
+echo "📋 Creating database..."
+cd /home/ubuntu/outline
+yarn db:create --env=production-ssl-disabled
+
+echo "📋 Granting database privileges..."
+sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE outline TO outline;"
+sudo -u postgres psql -d outline -c "
+GRANT ALL ON SCHEMA public TO outline;
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO outline;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO outline;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO outline;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO outline;
+" > /dev/null 2>&1
+
+# Run database migrations
+echo "🗃️  Running database migrations..."
+yarn db:migrate --env=production-ssl-disabled
+
+# Set proper ownership
+echo "📋 Setting file ownership..."
+chown -R ubuntu:ubuntu /home/ubuntu/outline
+chown -R ubuntu:ubuntu /var/lib/outline
+
+# Create a marker file to indicate setup is complete
+touch /home/ubuntu/outline/.production-ready
+
+echo "✅ Production setup complete!"
+echo "🌐 Outline will be available at: http://localhost:3000"
+echo "📧 SMTP server will capture login emails on port 1025"
+echo "🖥️  VNC Desktop available at: http://localhost:6080/vnc.html"

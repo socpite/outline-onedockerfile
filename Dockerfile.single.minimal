@@ -3,9 +3,35 @@
 
 FROM node:20-slim AS runtime
 
+# Set all environment variables at the beginning
+ENV NODE_ENV=production \
+    DATABASE_URL="postgres://outline:outline_password@127.0.0.1:5432/outline?sslmode=disable" \
+    REDIS_URL="redis://127.0.0.1:6379" \
+    SECRET_KEY="c4c6f859fe10406fcee1b909d273bb741517b2136b3c40759f674206ac5e2d62" \
+    UTILS_SECRET="310999ab7bd1349808c3efa0e03abdef0e69b1ff9618bb6f1e996ab3ea201240" \
+    URL="http://localhost:3000" \
+    FORCE_HTTPS=false \
+    FILE_STORAGE=local \
+    FILE_STORAGE_LOCAL_ROOT_DIR=/var/lib/outline/data \
+    LOG_LEVEL=info \
+    ENABLED_PLUGINS=email \
+    SMTP_HOST=127.0.0.1 \
+    SMTP_PORT=1025 \
+    SMTP_USERNAME="" \
+    SMTP_PASSWORD="" \
+    SMTP_FROM_EMAIL=noreply@outline.local \
+    SMTP_REPLY_EMAIL=support@outline.local \
+    SMTP_SECURE=false \
+    DISPLAY=:1 \
+    DEBIAN_FRONTEND=noninteractive \
+    XDG_CURRENT_DESKTOP=XFCE \
+    XDG_SESSION_DESKTOP=xfce \
+    XDG_SESSION_TYPE=x11 \
+    NODE_OPTIONS="--openssl-legacy-provider"
+
 # Install only essential system packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl wget ca-certificates sudo bash git jq \
+    curl wget ca-certificates sudo bash git jq netcat-openbsd openssl \
     postgresql postgresql-client redis-server nginx \
     xvfb x11vnc websockify python3-websockify novnc x11-utils \
     xfce4 xfwm4 xfdesktop4 xfce4-terminal dbus-x11 \
@@ -41,13 +67,15 @@ RUN UBUNTU_UID=$(id -u ubuntu) && \
     mkdir -p /tmp/.ICE-unix && \
     chmod 1777 /tmp/.ICE-unix
 
-# Clone Outline source and install dependencies
+# Clone Outline source, install dependencies, and build
 WORKDIR /home/ubuntu/outline
 RUN git clone https://github.com/outline/outline.git . && \
     chmod -R 777 /home/ubuntu/outline && \
     yarn config set registry https://registry.npmjs.org && \
     yarn install --network-timeout 1000000 && \
-    yarn add smtp-server mailparser netcat-openbsd 
+    yarn add smtp-server mailparser && \
+    yarn build && \
+    chown -R ubuntu:ubuntu /home/ubuntu/outline
 
 # Copy configuration files
 COPY dinit.d/ /etc/dinit.d/
@@ -60,15 +88,6 @@ COPY bashrc-outline /home/ubuntu/.bashrc
 RUN chmod +x /usr/local/bin/* && \
     chown -R ubuntu:ubuntu /home/ubuntu/.config && \
     chmod +x /usr/local/bin/reset-xfce4-defaults
-
-# Environment
-ENV NODE_ENV=production \
-    DISPLAY=:1 \
-    DEBIAN_FRONTEND=noninteractive \
-    XDG_CURRENT_DESKTOP=XFCE \
-    XDG_SESSION_DESKTOP=xfce \
-    XDG_SESSION_TYPE=x11 \
-    NODE_OPTIONS="--openssl-legacy-provider"
 
 # Expose ports
 EXPOSE 80 3000 5900 6080

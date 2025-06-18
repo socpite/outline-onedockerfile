@@ -1,0 +1,26 @@
+#!/bin/bash
+# Simple Outline startup script - no environment setup needed
+
+set -e
+
+cd /home/ubuntu/outline
+
+echo "🚀 Starting Outline production server..."
+
+# Quick service check
+echo "🔍 Checking services..."
+if ! pg_isready -h localhost -p 5432 -U outline >/dev/null 2>&1; then
+    echo "❌ Database not ready!"
+    exit 1
+fi
+
+if ! redis-cli ping >/dev/null 2>&1; then
+    echo "❌ Redis not ready!"
+    exit 1
+fi
+
+echo "✅ Services ready"
+
+# Start the production server
+echo "🎉 Starting Outline server..."
+exec yarn start

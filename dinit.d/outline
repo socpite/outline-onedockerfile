@@ -1,9 +1,8 @@
 type = process
-command = /usr/local/bin/start-outline-production
+command = /usr/local/bin/start-outline-simple
 working-dir = /home/ubuntu/outline
 run-as = ubuntu
 restart = true
-depends-on = outline-production-setup
+depends-on = outline-setup
 depends-on = redis
-env-file = /etc/dinit.d/outline.env
 logfile = /var/log/dinit/outline.log
