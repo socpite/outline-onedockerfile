@@ -1,0 +1,5 @@
+type = process
+command = /usr/bin/websockify --web /usr/share/novnc 6080 localhost:5900
+restart = true
+depends-on = x11vnc
+logfile = /var/log/dinit/websockify.log

@@ -1,0 +1,12 @@
+#!/bin/bash
+set -e
+
+export HOME=/home/ubuntu
+
+echo "=== Resetting XFCE4 to defaults ==="
+
+# Simply delete all XFCE configuration - let XFCE create defaults
+rm -rf "$HOME/.config/xfce4" || true
+rm -rf "$HOME/.cache/sessions" || true
+
+echo "XFCE4 configuration deleted - will use system defaults"

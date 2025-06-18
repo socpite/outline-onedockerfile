@@ -1,0 +1,4 @@
+type = process
+command = /usr/sbin/nginx -g "daemon off;"
+restart = true
+logfile = /var/log/dinit/nginx.log

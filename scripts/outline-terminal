@@ -1,0 +1,8 @@
+#!/bin/bash
+# Launch terminal in Outline directory with environment loaded
+cd /home/ubuntu/outline
+if [ -f /home/ubuntu/outline/.env ]; then
+    xfce4-terminal --working-directory=/home/ubuntu/outline --title="Outline Development" --command="bash -c 'echo \"🚀 Outline Development Environment\"; echo \"📁 Working directory: \$(pwd)\"; echo \"💡 Environment file: /home/ubuntu/outline/.env\"; echo \"\"; bash'"
+else
+    xfce4-terminal --working-directory=/home/ubuntu/outline --title="Outline Development"
+fi

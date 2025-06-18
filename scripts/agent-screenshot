@@ -1,0 +1,3 @@
+#!/bin/bash
+DISPLAY=:1 scrot -q 100 "/home/ubuntu/screenshots/latest.png"
+echo "Screenshot saved"

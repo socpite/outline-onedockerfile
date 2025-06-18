@@ -1,0 +1,468 @@
+# syntax=docker/dockerfile:1
+# Agent Development Dockerfile for Outline + PostgreSQL + Redis + X11/VNC in single container
+ARG APP_PATH=/opt/outline
+
+# Build dinit from source
+FROM debian:trixie AS cpp_builder
+
+RUN apt-get update -y \
+  && apt-get install -y --no-install-recommends \
+  git \
+  g++ \
+  make \
+  cmake \
+  m4 \
+  openssl \
+  ca-certificates \
+  sudo
+
+RUN update-ca-certificates
+
+# git clone dinit
+RUN git clone https://github.com/davmac314/dinit --depth 1
+
+# build dinit
+RUN cd dinit && make && make install
+
+# Development runtime with all services
+FROM ubuntu:22.04 AS runtime
+
+# Install system packages
+RUN apt-get update && apt-get install -y \
+    # Core system
+    curl \
+    wget \
+    ca-certificates \
+    gnupg \
+    lsb-release \
+    git \
+    vim \
+    nano \
+    htop \
+    tree \
+    jq \
+    unzip \
+    # Development tools
+    build-essential \
+    python3 \
+    python3-pip \
+    # Agent tools
+    xdotool \
+    imagemagick \
+    scrot \
+    wmctrl \
+    xclip \
+    # Node.js 20
+    && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    # Yarn package manager
+    && npm install -g yarn nodemon \
+    # PostgreSQL 16
+    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc | gpg --dearmor -o /usr/share/keyrings/postgresql-keyring.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/postgresql-keyring.gpg] https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update \
+    && apt-get install -y postgresql-16 postgresql-client-16 postgresql-contrib-16 \
+    # Redis
+    && apt-get install -y redis-server \
+    # Nginx for reverse proxy
+    && apt-get install -y nginx \
+    # X11/VNC setup
+    && apt-get install -y \
+        xvfb \
+        x11vnc \
+        websockify \
+        xfce4 \
+        xfce4-terminal \
+        firefox \
+        novnc \
+        # Development GUI tools
+        gedit \
+        thunar \
+    # Cleanup
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
+
+# Copy dinit from builder
+COPY --from=cpp_builder /usr/sbin/dinit /usr/local/bin/dinit
+
+# Create application user
+RUN addgroup --gid 1001 outline && \
+    adduser --uid 1001 --ingroup outline --disabled-password --gecos "" outline
+
+# Set up PostgreSQL
+RUN mkdir -p /var/lib/postgresql/16/main /var/log/postgresql /run/postgresql \
+    && chown -R postgres:postgres /var/lib/postgresql /var/log/postgresql /run/postgresql \
+    && chmod 755 /var/lib/postgresql /var/log/postgresql /run/postgresql
+
+# Set up Redis
+RUN mkdir -p /var/lib/redis /var/log/redis \
+    && chown -R redis:redis /var/lib/redis /var/log/redis
+
+# Clone Outline source code into container for agent development
+ARG APP_PATH=/opt/outline
+WORKDIR $APP_PATH
+
+# Clone the Outline repository (agent will work with this copy)
+RUN git clone https://github.com/outline/outline.git . && \
+    chown -R outline:outline . && \
+    # Create additional directories
+    mkdir -p /var/lib/outline/data /var/log/outline /home/outline/screenshots && \
+    chown -R outline:outline /var/lib/outline /var/log/outline /home/outline
+
+# Install Outline dependencies
+RUN sudo -u outline yarn install
+
+# Set up VNC directories
+RUN mkdir -p /var/log/vnc /home/outline/.vnc \
+    && chown -R outline:outline /home/outline /var/log/vnc
+
+# Create dinit service directories
+RUN mkdir -p /etc/dinit.d /etc/dinit.d/boot.d /var/log/dinit
+
+# PostgreSQL initialization script
+COPY <<'EOF' /usr/local/bin/setup_postgres_data.sh
+#!/bin/bash
+set -e
+
+if [ ! -f /var/lib/postgresql/16/main/PG_VERSION ]; then
+    echo "Initializing PostgreSQL database..."
+    sudo -u postgres /usr/lib/postgresql/16/bin/initdb -D /var/lib/postgresql/16/main
+    
+    # Configure PostgreSQL
+    sudo -u postgres tee -a /var/lib/postgresql/16/main/postgresql.conf > /dev/null <<PGCONF
+listen_addresses = '*'
+port = 5432
+max_connections = 100
+shared_buffers = 128MB
+PGCONF
+
+    sudo -u postgres tee /var/lib/postgresql/16/main/pg_hba.conf > /dev/null <<HBACONF
+local   all             postgres                                peer
+local   all             all                                     md5
+host    all             all             127.0.0.1/32            md5
+host    all             all             ::1/128                 md5
+host    all             all             0.0.0.0/0               md5
+HBACONF
+fi
+EOF
+
+# PostgreSQL environment setup script
+COPY <<'EOF' /usr/local/bin/setup_postgres_env.sh
+#!/bin/bash
+set -e
+
+# Wait for PostgreSQL to be ready
+until sudo -u postgres pg_isready -h localhost -p 5432; do
+    echo "Waiting for PostgreSQL to be ready..."
+    sleep 2
+done
+
+# Create database and user if they don't exist
+sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = 'outline'" | grep -q 1 || \
+    sudo -u postgres createdb outline
+
+sudo -u postgres psql -tc "SELECT 1 FROM pg_user WHERE usename = 'outline'" | grep -q 1 || \
+    sudo -u postgres psql -c "CREATE USER outline WITH PASSWORD 'outline_password';"
+
+sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE outline TO outline;"
+sudo -u postgres psql -d outline -c "GRANT ALL ON SCHEMA public TO outline;"
+EOF
+
+# Create agent helper scripts
+COPY <<'EOF' /usr/local/bin/agent-screenshot
+#!/bin/bash
+# Take a screenshot for the agent
+DISPLAY=:1 scrot -q 100 "/home/outline/screenshots/screenshot-$(date +%Y%m%d-%H%M%S).png"
+# Also create a latest.png for easy access
+DISPLAY=:1 scrot -q 100 "/home/outline/screenshots/latest.png"
+echo "Screenshot saved to /home/outline/screenshots/latest.png"
+EOF
+
+COPY <<'EOF' /usr/local/bin/agent-rebuild
+#!/bin/bash
+# Rebuild Outline application
+cd /opt/outline
+echo "Building Outline application..."
+sudo -u outline yarn build
+echo "Build complete!"
+EOF
+
+COPY <<'EOF' /usr/local/bin/agent-restart
+#!/bin/bash
+# Restart Outline service
+echo "Restarting Outline service..."
+dinitctl restart outline
+echo "Outline service restarted!"
+EOF
+
+COPY <<'EOF' /usr/local/bin/agent-status
+#!/bin/bash
+# Show status of all services
+echo "=== Service Status ==="
+dinitctl list
+echo ""
+echo "=== Outline Process ==="
+ps aux | grep -E "(node|yarn)" | grep -v grep
+echo ""
+echo "=== Network Status ==="
+netstat -tlnp | grep -E "(3000|5432|6379|80)"
+echo ""
+echo "=== Disk Usage ==="
+df -h /opt/outline /var/lib/outline
+EOF
+
+COPY <<'EOF' /usr/local/bin/agent-logs
+#!/bin/bash
+# Show recent logs
+echo "=== Recent Outline Logs ==="
+tail -50 /var/log/dinit/outline.log
+echo ""
+echo "=== Recent PostgreSQL Logs ==="
+tail -20 /var/log/dinit/postgres.log
+echo ""
+echo "=== Recent Redis Logs ==="
+tail -20 /var/log/dinit/redis.log
+EOF
+
+COPY <<'EOF' /usr/local/bin/agent-test
+#!/bin/bash
+# Run tests
+cd /opt/outline
+echo "Running Outline tests..."
+sudo -u outline yarn test
+EOF
+
+COPY <<'EOF' /usr/local/bin/agent-dev-server
+#!/bin/bash
+# Start development server manually (if needed)
+cd /opt/outline
+echo "Starting development server..."
+sudo -u outline yarn dev:watch
+EOF
+
+# Make all scripts executable
+RUN chmod +x /usr/local/bin/setup_postgres_data.sh /usr/local/bin/setup_postgres_env.sh /usr/local/bin/agent-*
+
+# Nginx configuration
+COPY <<'EOF' /etc/nginx/sites-available/outline
+upstream outline_backend {
+    server 127.0.0.1:3000;
+}
+
+upstream vnc_websocket {
+    server 127.0.0.1:6080;
+}
+
+server {
+    listen 80 default_server;
+    server_name _;
+    
+    # VNC access
+    location /vnc/ {
+        proxy_pass http://vnc_websocket/;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    
+    # Outline application
+    location / {
+        proxy_pass http://outline_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 86400;
+    }
+}
+EOF
+
+RUN ln -sf /etc/nginx/sites-available/outline /etc/nginx/sites-enabled/default
+
+# dinit service files
+
+# Boot service (waits for all services)
+COPY <<'EOF' /etc/dinit.d/boot
+type = internal
+waits-for.d = /etc/dinit.d/boot.d
+EOF
+
+# PostgreSQL data initialization (runs once)
+COPY <<'EOF' /etc/dinit.d/postgres-init
+type = process
+command = /usr/local/bin/setup_postgres_data.sh
+restart = false
+depends-on = boot
+EOF
+
+# PostgreSQL service
+COPY <<'EOF' /etc/dinit.d/postgres
+type = process
+command = /usr/lib/postgresql/16/bin/postgres -D /var/lib/postgresql/16/main
+working-dir = /var/lib/postgresql
+run-as = postgres
+restart = true
+smooth-recovery = true
+depends-on = postgres-init
+logfile = /var/log/dinit/postgres.log
+EOF
+
+# PostgreSQL environment setup (waits for postgres to be ready)
+COPY <<'EOF' /etc/dinit.d/postgres-env
+type = process
+command = /usr/local/bin/setup_postgres_env.sh
+restart = false
+depends-on = postgres
+EOF
+
+# Redis service
+COPY <<'EOF' /etc/dinit.d/redis
+type = process
+command = /usr/bin/redis-server --daemonize no --bind 127.0.0.1 --port 6379
+run-as = redis
+restart = true
+smooth-recovery = true
+depends-on = boot
+logfile = /var/log/dinit/redis.log
+EOF
+
+# Xvfb service
+COPY <<'EOF' /etc/dinit.d/xvfb
+type = process
+command = /usr/bin/Xvfb :1 -screen 0 1280x800x24 -ac +extension GLX +render -noreset
+restart = true
+smooth-recovery = true
+depends-on = boot
+logfile = /var/log/dinit/xvfb.log
+EOF
+
+# XFCE desktop service
+COPY <<'EOF' /etc/dinit.d/xfce
+type = process
+command = /usr/bin/startxfce4
+run-as = outline
+restart = true
+smooth-recovery = true
+depends-on = xvfb
+env-file = /etc/dinit.d/xfce.env
+logfile = /var/log/dinit/xfce.log
+EOF
+
+# XFCE environment
+COPY <<'EOF' /etc/dinit.d/xfce.env
+DISPLAY=:1
+HOME=/home/outline
+USER=outline
+EOF
+
+# x11vnc service
+COPY <<'EOF' /etc/dinit.d/x11vnc
+type = process
+command = /usr/bin/x11vnc -display :1 -forever -usepw -create -shared -rfbport 5900
+restart = true
+smooth-recovery = true
+depends-on = xfce
+logfile = /var/log/dinit/x11vnc.log
+EOF
+
+# websockify service (VNC to WebSocket bridge)
+COPY <<'EOF' /etc/dinit.d/websockify
+type = process
+command = /usr/bin/websockify --web /usr/share/novnc 6080 localhost:5900
+restart = true
+smooth-recovery = true
+depends-on = x11vnc
+logfile = /var/log/dinit/websockify.log
+EOF
+
+# Nginx service
+COPY <<'EOF' /etc/dinit.d/nginx
+type = process
+command = /usr/sbin/nginx -g "daemon off;"
+restart = true
+smooth-recovery = true
+depends-on = boot
+logfile = /var/log/dinit/nginx.log
+EOF
+
+# Outline development service
+COPY <<'EOF' /etc/dinit.d/outline
+type = process
+command = /usr/bin/yarn dev:watch
+working-dir = /opt/outline
+run-as = outline
+restart = true
+smooth-recovery = true
+depends-on = postgres-env redis
+env-file = /etc/dinit.d/outline.env
+logfile = /var/log/dinit/outline.log
+EOF
+
+# Outline development environment configuration
+COPY <<'EOF' /etc/dinit.d/outline.env
+NODE_ENV=development
+PORT=3000
+SECRET_KEY=development-secret-key-not-for-production
+UTILS_SECRET=development-utils-secret-not-for-production
+DATABASE_URL=postgres://outline:outline_password@localhost:5432/outline
+DATABASE_CONNECTION_POOL_MIN=1
+DATABASE_CONNECTION_POOL_MAX=5
+REDIS_URL=redis://localhost:6379
+URL=http://localhost
+FORCE_HTTPS=false
+ENABLE_UPDATES=false
+WEB_CONCURRENCY=1
+MAXIMUM_IMPORT_SIZE=5120000
+DEBUG=cache,presenters,events,emails,mailer,utils,multiplayer,server,services
+FILE_STORAGE=local
+FILE_STORAGE_LOCAL_ROOT_DIR=/var/lib/outline/data
+FILE_STORAGE_UPLOAD_MAX_SIZE=26214400
+COLLABORATION_URL=ws://localhost
+# Development specific
+LOG_LEVEL=debug
+DEVELOPMENT_UNSAFE_INLINE_CSP=true
+EOF
+
+# Add services to boot dependency
+RUN ln -s /etc/dinit.d/postgres-init /etc/dinit.d/boot.d/ && \
+    ln -s /etc/dinit.d/redis /etc/dinit.d/boot.d/ && \
+    ln -s /etc/dinit.d/xvfb /etc/dinit.d/boot.d/ && \
+    ln -s /etc/dinit.d/nginx /etc/dinit.d/boot.d/
+
+# Set VNC password for outline user
+RUN echo "outline" | sudo -u outline vncpasswd -f > /home/outline/.vnc/passwd && \
+    chmod 600 /home/outline/.vnc/passwd && \
+    chown outline:outline /home/outline/.vnc/passwd
+
+# Create log directories
+RUN mkdir -p /var/log/dinit && \
+    touch /var/log/dinit/postgres.log \
+          /var/log/dinit/redis.log \
+          /var/log/dinit/xvfb.log \
+          /var/log/dinit/xfce.log \
+          /var/log/dinit/x11vnc.log \
+          /var/log/dinit/websockify.log \
+          /var/log/dinit/nginx.log \
+          /var/log/dinit/outline.log
+
+# Environment variables for development
+ENV NODE_ENV=development
+ENV FILE_STORAGE_LOCAL_ROOT_DIR=/var/lib/outline/data
+ENV DISPLAY=:1
+
+# Expose ports (add dev server port)
+EXPOSE 80 3000 5900 6080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost/_health || exit 1
+
+# Use dinit as init system
+CMD ["/usr/local/bin/dinit", "--container", "-d", "/etc/dinit.d/"]

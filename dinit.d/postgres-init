@@ -1,0 +1,5 @@
+type = process
+command = /usr/local/bin/setup_postgres.sh
+restart = false
+stop-timeout = 60000
+logfile = /var/log/dinit/postgres-init.log

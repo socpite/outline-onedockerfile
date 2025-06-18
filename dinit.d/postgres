@@ -1,0 +1,6 @@
+type = process
+command = /usr/local/bin/postgres-wrapper.sh
+working-dir = /var/lib/postgresql
+run-as = postgres
+restart = true
+logfile = /var/log/dinit/postgres.log

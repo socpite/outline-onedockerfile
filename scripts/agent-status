@@ -1,0 +1,4 @@
+#!/bin/bash
+dinitctl list
+echo "Active processes:"
+cat /proc/*/comm 2>/dev/null | grep -E "(node|postgres|redis)" | sort | uniq -c

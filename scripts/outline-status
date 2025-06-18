@@ -1,0 +1,76 @@
+#!/bin/bash
+# Outline Development Environment Status Check
+
+echo "🔍 Checking Outline Development Environment Status..."
+echo ""
+
+# Check VNC
+if pgrep x11vnc >/dev/null && pgrep websockify >/dev/null; then
+    echo "✅ VNC Desktop: Ready at http://localhost:6080/vnc.html"
+else
+    echo "❌ VNC Desktop: Not running"
+fi
+
+# Check XFCE
+if pgrep xfwm4 >/dev/null && pgrep xfce4-panel >/dev/null; then
+    echo "✅ XFCE Desktop: Running"
+else
+    echo "❌ XFCE Desktop: Not running"
+fi
+
+# Check PostgreSQL
+if sudo -u postgres pg_isready >/dev/null 2>&1; then
+    echo "✅ PostgreSQL: Running"
+    
+    # Check Outline database
+    if sudo -u postgres psql -tc "SELECT 1 FROM pg_database WHERE datname = 'outline'" | grep -q 1; then
+        echo "✅ Outline Database: Created"
+        
+        # Check connection
+        if [ -f /home/ubuntu/outline/.env ]; then
+            if PGPASSWORD=outline_password psql -h 127.0.0.1 -U outline -d outline -c "SELECT 1;" >/dev/null 2>&1; then
+                echo "✅ Database Connection: Working"
+            else
+                echo "❌ Database Connection: Failed"
+            fi
+        else
+            echo "⚠️  Environment: Not configured"
+        fi
+    else
+        echo "❌ Outline Database: Not created"
+    fi
+else
+    echo "❌ PostgreSQL: Not running"
+fi
+
+# Check Redis
+if redis-cli ping >/dev/null 2>&1; then
+    echo "✅ Redis: Running"
+else
+    echo "❌ Redis: Not running"
+fi
+
+# Check Nginx
+if pgrep nginx >/dev/null; then
+    echo "✅ Nginx: Running"
+else
+    echo "❌ Nginx: Not running"
+fi
+
+# Check environment file
+if [ -f /home/ubuntu/outline/.env ]; then
+    echo "✅ Environment: Configured (/home/ubuntu/outline/.env)"
+else
+    echo "❌ Environment: Not configured"
+fi
+
+echo ""
+echo "📋 Development Commands:"
+echo "   cd /home/ubuntu/outline"
+echo "   yarn build          # Build the project"
+echo "   yarn db:migrate     # Run database migrations"
+echo "   yarn dev:watch      # Start development server"
+echo ""
+echo "🌐 Access Points:"
+echo "   VNC Desktop: http://localhost:6080/vnc.html"
+echo "   Outline App: http://localhost:3000 (after starting dev server)"

@@ -1,0 +1,4 @@
+type = process
+command = /usr/bin/Xvfb :1 -screen 0 1280x800x24 -ac
+restart = true
+logfile = /var/log/dinit/xvfb.log

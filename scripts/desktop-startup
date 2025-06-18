@@ -1,0 +1,5 @@
+#!/bin/bash
+# Minimal desktop startup - no auto-launching applications
+export DISPLAY=:1
+
+echo "Desktop ready - no auto-start applications"

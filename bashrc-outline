@@ -1,0 +1,2 @@
+# Change to /home/ubuntu/outline when starting a new shell
+cd /home/ubuntu/outline 2>/dev/null || true

@@ -1,0 +1,77 @@
+# syntax=docker/dockerfile:1
+# Ultra-fast single container Dockerfile for Outline + PostgreSQL + Redis + X11/VNC
+
+FROM node:20-slim AS runtime
+
+# Install minimal system packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl wget ca-certificates sudo bash git \
+    postgresql postgresql-client redis-server nginx \
+    xvfb x11vnc websockify python3-websockify novnc \
+    scrot imagemagick tigervnc-common xdotool x11-utils \
+    xfce4 xfce4-terminal dbus-x11 \
+    xfce4-goodies xfce4-settings at-spi2-core \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install dinit directly from GitHub releases
+RUN wget -O /tmp/dinit.tar.gz https://github.com/davmac314/dinit/archive/refs/tags/v0.19.4.tar.gz && \
+    cd /tmp && tar xzf dinit.tar.gz && cd dinit-* && \
+    apt-get update && apt-get install -y --no-install-recommends g++ make m4 && \
+    make && make install && \
+    apt-get remove -y g++ make m4 && apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/* /tmp/dinit*
+
+# Create users and directories
+RUN adduser --disabled-password --gecos "" outline && \
+    adduser outline sudo && \
+    echo "outline ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
+    mkdir -p /opt/outline /var/lib/outline/data /var/log/outline \
+    /var/lib/postgresql/main /var/log/postgresql /run/postgresql \
+    /var/lib/redis /var/log/redis \
+    /home/outline/screenshots /home/outline/.vnc \
+    /home/outline/.config/xfce4 /home/outline/.cache \
+    /var/log/dinit /etc/dinit.d /etc/dinit.d/boot.d && \
+    chown -R postgres:postgres /var/lib/postgresql /var/log/postgresql /run/postgresql && \
+    chown -R redis:redis /var/lib/redis /var/log/redis && \
+    chown -R outline:outline /opt/outline /var/lib/outline /var/log/outline /home/outline
+
+# Clone Outline source and install dependencies
+WORKDIR /opt/outline
+RUN git clone https://github.com/outline/outline.git . && \
+    chown -R outline:outline . && \
+    sudo -u outline yarn install --frozen-lockfile
+
+# Copy configuration files
+COPY scripts/ /usr/local/bin/
+COPY dinit.d/ /etc/dinit.d/
+COPY nginx.conf /etc/nginx/sites-available/default
+
+# Make scripts executable
+RUN chmod +x /usr/local/bin/*
+
+# Create runtime directories for XFCE
+RUN OUTLINE_UID=$(id -u outline) && \
+    mkdir -p /run/user && \
+    chmod 755 /run/user && \
+    mkdir -p /run/user/$OUTLINE_UID && \
+    chown outline:outline /run/user/$OUTLINE_UID && \
+    mkdir -p /tmp/.ICE-unix && \
+    chmod 1777 /tmp/.ICE-unix
+
+# Environment
+ENV NODE_ENV=development \
+    DISPLAY=:1 \
+    DEBIAN_FRONTEND=noninteractive \
+    XDG_CURRENT_DESKTOP=XFCE \
+    XDG_SESSION_DESKTOP=xfce \
+    XDG_SESSION_TYPE=x11
+
+# Expose ports
+EXPOSE 80 3000 5900 6080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:3000/_health || exit 1
+
+# Start dinit
+CMD ["/usr/sbin/dinit", "--container", "-d", "/etc/dinit.d/"]

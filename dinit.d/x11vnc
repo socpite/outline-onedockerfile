@@ -1,0 +1,5 @@
+type = process
+command = /usr/bin/x11vnc -display :1 -forever -nopw -shared -rfbport 5900
+restart = true
+depends-on = xvfb
+logfile = /var/log/dinit/x11vnc.log

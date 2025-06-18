@@ -1,0 +1,60 @@
+#!/bin/bash
+set -e
+
+export DISPLAY=:1
+export HOME=/home/ubuntu
+export USER=ubuntu
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+export XDG_CONFIG_HOME=/home/ubuntu/.config
+export XDG_CACHE_HOME=/home/ubuntu/.cache
+export XDG_DATA_HOME=/home/ubuntu/.local/share
+
+echo "=== XFCE Startup with Defaults ==="
+echo "User: $(whoami)"
+
+# Create necessary directories
+mkdir -p "$XDG_RUNTIME_DIR" "$XDG_CONFIG_HOME" "$XDG_CACHE_HOME" "$XDG_DATA_HOME"
+
+# Wait for X server to be ready
+for i in {1..30}; do
+    if DISPLAY=:1 xdpyinfo >/dev/null 2>&1; then
+        echo "X server ready"
+        break
+    fi
+    sleep 1
+done
+
+if ! DISPLAY=:1 xdpyinfo >/dev/null 2>&1; then
+    echo "ERROR: X server not available"
+    exit 1
+fi
+
+# Kill any existing XFCE processes
+pkill -f xfwm4 || true
+pkill -f xfce4-panel || true
+pkill -f xfdesktop || true
+pkill -f xfsettingsd || true
+pkill -f xfce4-terminal || true
+sleep 2
+
+# Start XFCE components in order
+echo "Starting settings daemon..."
+DISPLAY=:1 xfsettingsd &
+sleep 1
+
+echo "Starting window manager..."
+DISPLAY=:1 xfwm4 &
+sleep 2
+
+echo "Starting panel..."
+DISPLAY=:1 xfce4-panel &
+sleep 2
+
+echo "Starting desktop..."
+DISPLAY=:1 xfdesktop &
+sleep 2
+
+echo "=== XFCE Ready ==="
+
+# Keep the script running
+wait

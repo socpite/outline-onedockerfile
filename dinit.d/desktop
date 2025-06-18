@@ -1,0 +1,7 @@
+type = process
+command = /usr/local/bin/desktop-startup
+restart = false
+depends-on = xfce4
+run-as = ubuntu
+env-file = /etc/dinit.d/outline.env
+logfile = /var/log/dinit/desktop.log

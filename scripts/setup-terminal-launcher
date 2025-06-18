@@ -1,0 +1,27 @@
+#!/bin/bash
+# Create custom XFCE terminal launcher that starts in /opt/outline
+
+export HOME=/home/outline
+export XDG_CONFIG_HOME=/home/outline/.config
+
+echo "Creating custom terminal launcher..."
+
+# Create applications directory
+mkdir -p "$XDG_CONFIG_HOME/applications"
+
+# Create custom terminal launcher
+cat > "$XDG_CONFIG_HOME/applications/xfce4-terminal.desktop" << 'EOF'
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Terminal
+Comment=Terminal Emulator
+Exec=xfce4-terminal --working-directory=/opt/outline
+Icon=utilities-terminal
+StartupNotify=true
+Terminal=false
+Categories=System;TerminalEmulator;
+Keywords=shell;prompt;command;commandline;
+EOF
+
+echo "Custom terminal launcher created - will always start in /opt/outline"

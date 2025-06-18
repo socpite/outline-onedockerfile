@@ -1,0 +1,58 @@
+#!/bin/bash
+# Simple XFCE test script
+
+export DISPLAY=:1
+export HOME=/home/ubuntu
+
+echo "=== XFCE Test Script ==="
+echo "User: $(whoami)"
+echo "Display: $DISPLAY"
+echo "Home: $HOME"
+
+# Test X server connection
+echo "Testing X server connection..."
+if xdpyinfo -display :1 >/dev/null 2>&1; then
+    echo "✅ X server is accessible"
+else
+    echo "❌ X server is NOT accessible"
+    exit 1
+fi
+
+# Test window manager
+echo "Testing window manager..."
+if pgrep xfwm4 >/dev/null; then
+    echo "✅ Window manager (xfwm4) is running"
+else
+    echo "❌ Window manager is NOT running"
+fi
+
+# Test panel
+echo "Testing panel..."
+if pgrep xfce4-panel >/dev/null; then
+    echo "✅ Panel (xfce4-panel) is running"
+else
+    echo "❌ Panel is NOT running"
+fi
+
+# Test desktop
+echo "Testing desktop..."
+if pgrep xfdesktop >/dev/null; then
+    echo "✅ Desktop (xfdesktop) is running"
+else
+    echo "❌ Desktop is NOT running"
+fi
+
+# Test simple window creation
+echo "Testing window creation..."
+xterm -geometry 80x24+100+100 -title "Test Window" &
+XTERM_PID=$!
+sleep 2
+
+if kill -0 $XTERM_PID 2>/dev/null; then
+    echo "✅ Window creation successful"
+    kill $XTERM_PID
+else
+    echo "❌ Window creation failed"
+fi
+
+echo "=== Test Complete ==="

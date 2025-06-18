@@ -1,0 +1,26 @@
+#!/bin/bash
+# Simple startup script that ensures PostgreSQL is running and setup is complete
+
+echo "🚀 Starting Outline development environment..."
+
+# Wait a bit for other services to start
+sleep 5
+
+# Check if PostgreSQL is running, if not start it
+if ! sudo -u postgres pg_isready >/dev/null 2>&1; then
+    echo "📋 Starting PostgreSQL..."
+    sudo -u postgres /usr/lib/postgresql/15/bin/postgres -D /var/lib/postgresql/main &
+    sleep 3
+fi
+
+# Run the setup if environment doesn't exist
+if [ ! -f /home/ubuntu/outline/.env ]; then
+    echo "📋 Running initial setup..."
+    /usr/local/bin/setup-outline-dev
+else
+    echo "✅ Environment already configured"
+fi
+
+echo "🎉 Outline development environment ready!"
+echo "🖥️  VNC: http://localhost:6080/vnc.html"
+echo "📋 Status: outline-status"

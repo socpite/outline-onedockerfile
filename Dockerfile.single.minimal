@@ -1,0 +1,79 @@
+# syntax=docker/dockerfile:1
+# Lightweight single container Dockerfile for Outline + PostgreSQL + Redis + X11/VNC
+
+FROM node:20-slim AS runtime
+
+# Install only essential system packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl wget ca-certificates sudo bash git \
+    postgresql postgresql-client redis-server nginx \
+    xvfb x11vnc websockify python3-websockify novnc x11-utils \
+    xfce4 xfwm4 xfdesktop4 xfce4-terminal dbus-x11 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install dinit directly from GitHub releases
+RUN wget -O /tmp/dinit.tar.gz https://github.com/davmac314/dinit/archive/refs/tags/v0.19.4.tar.gz && \
+    cd /tmp && tar xzf dinit.tar.gz && cd dinit-* && \
+    apt-get update && apt-get install -y --no-install-recommends g++ make m4 && \
+    make && make install && \
+    apt-get remove -y g++ make m4 && apt-get autoremove -y && \
+    rm -rf /var/lib/apt/lists/* /tmp/dinit*
+
+# Create users and directories
+RUN adduser --disabled-password --gecos "" ubuntu && \
+    adduser ubuntu sudo && \
+    echo "ubuntu ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
+    mkdir -p /home/ubuntu/outline /var/lib/outline/data /var/log/outline \
+    /var/lib/postgresql/main /var/log/postgresql /run/postgresql \
+    /var/lib/redis /var/log/redis \
+    /home/ubuntu/.config/xfce4 /home/ubuntu/.cache \
+    /var/log/dinit /etc/dinit.d /etc/dinit.d/boot.d && \
+    chown -R postgres:postgres /var/lib/postgresql /var/log/postgresql /run/postgresql && \
+    chown -R redis:redis /var/lib/redis /var/log/redis && \
+    chown -R ubuntu:ubuntu /home/ubuntu/outline /var/lib/outline /var/log/outline /home/ubuntu
+
+# Create runtime directories for XFCE
+RUN UBUNTU_UID=$(id -u ubuntu) && \
+    mkdir -p /run/user && \
+    chmod 755 /run/user && \
+    mkdir -p /run/user/$UBUNTU_UID && \
+    chown ubuntu:ubuntu /run/user/$UBUNTU_UID && \
+    mkdir -p /tmp/.ICE-unix && \
+    chmod 1777 /tmp/.ICE-unix
+
+# Clone Outline source and install dependencies
+WORKDIR /home/ubuntu/outline
+RUN git clone https://github.com/outline/outline.git . && \
+    chmod -R 777 /home/ubuntu/outline && \
+    yarn config set registry https://registry.npmjs.org && \
+    yarn install --network-timeout 1000000 
+
+# Copy configuration files
+COPY dinit.d/ /etc/dinit.d/
+COPY nginx.conf /etc/nginx/sites-available/default
+COPY scripts/ /usr/local/bin/
+COPY bashrc-outline /home/ubuntu/.bashrc
+
+# Make scripts executable and set ownership
+RUN chmod +x /usr/local/bin/* && \
+    chown -R ubuntu:ubuntu /home/ubuntu/.config && \
+    chmod +x /usr/local/bin/reset-xfce4-defaults
+
+# Environment
+ENV NODE_ENV=development \
+    DISPLAY=:1 \
+    DEBIAN_FRONTEND=noninteractive \
+    XDG_CURRENT_DESKTOP=XFCE \
+    XDG_SESSION_DESKTOP=xfce \
+    XDG_SESSION_TYPE=x11 \
+    NODE_OPTIONS="--openssl-legacy-provider"
+
+# Expose ports
+EXPOSE 80 3000 5900 6080
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD /usr/local/bin/outline-status >/dev/null 2>&1 || exit 1
+
+# Start dinit
+CMD ["/usr/sbin/dinit", "--container", "-d", "/etc/dinit.d/"]

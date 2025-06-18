@@ -1,0 +1,8 @@
+type = process
+command = /usr/local/bin/start-xfce4-manual
+restart = true
+depends-on = xvfb
+run-as = ubuntu
+env-file = /etc/dinit.d/outline.env
+logfile = /var/log/dinit/xfce4.log
+
