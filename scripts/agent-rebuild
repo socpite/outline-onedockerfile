@@ -1,2 +1,0 @@
-#!/bin/bash
-cd /home/ubuntu/outline && sudo -u ubuntu yarn build

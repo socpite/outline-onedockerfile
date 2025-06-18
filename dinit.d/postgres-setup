@@ -1,4 +1,0 @@
-type = process
-command = /usr/local/bin/setup_db.sh
-restart = false
-depends-on = postgres
