@@ -1,0 +1,20 @@
+#!/bin/bash
+# Runtime startup script - just starts services since setup is done during build
+
+echo "🚀 Starting Outline runtime services..."
+
+# Just ensure services are ready (they should start via dinit)
+echo "⏳ Waiting for services..."
+for i in {1..30}; do
+    if pg_isready -h localhost -p 5432 -U outline >/dev/null 2>&1 && redis-cli ping >/dev/null 2>&1; then
+        echo "✅ Services ready!"
+        break
+    fi
+    echo "   Waiting for services... ($i/30)"
+    sleep 2
+done
+
+echo "🎉 Outline runtime ready!"
+echo "🌐 Access: http://localhost:3000"
+echo "📧 SMTP: watch-emails to see login links"
+echo "🖥️  VNC: http://localhost:6080/vnc.html"

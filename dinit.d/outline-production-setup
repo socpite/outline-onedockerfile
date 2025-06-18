@@ -1,0 +1,7 @@
+type = process
+command = /usr/local/bin/setup-outline-production
+restart = false
+depends-on = postgres
+depends-on = redis
+run-as = root
+logfile = /var/log/dinit/outline-production-setup.log

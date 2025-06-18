@@ -1,9 +1,9 @@
 type = process
-command = /usr/local/bin/start-outline
+command = /usr/local/bin/start-outline-production
 working-dir = /home/ubuntu/outline
 run-as = ubuntu
 restart = true
-depends-on = postgres-setup
+depends-on = postgres
 depends-on = redis
 env-file = /etc/dinit.d/outline.env
 logfile = /var/log/dinit/outline.log

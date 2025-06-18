@@ -61,6 +61,14 @@ RUN chmod +x /usr/local/bin/* && \
     chown -R ubuntu:ubuntu /home/ubuntu/.config && \
     chmod +x /usr/local/bin/reset-xfce4-defaults
 
+# Start services and run production setup during build
+RUN service postgresql start && \
+    service redis-server start && \
+    sleep 10 && \
+    /usr/local/bin/setup-outline-production && \
+    service postgresql stop && \
+    service redis-server stop
+
 # Environment
 ENV NODE_ENV=production \
     DISPLAY=:1 \

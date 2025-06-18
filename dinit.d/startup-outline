@@ -1,5 +1,5 @@
 type = process
-command = /usr/local/bin/startup-outline
+command = /usr/local/bin/startup-outline-runtime
 restart = false
 depends-on = redis
 run-as = root
