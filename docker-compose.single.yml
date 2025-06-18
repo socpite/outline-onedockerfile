@@ -21,8 +21,8 @@ services:
       # Screenshots directory for agent
       - screenshots:/home/outline/screenshots
     environment:
-      # Development environment variables
-      - NODE_ENV=development
+      # Production environment variables
+      - NODE_ENV=production
       - SECRET_KEY=development-secret-key-not-for-production
       - UTILS_SECRET=development-utils-secret-not-for-production
       - URL=http://localhost:3000

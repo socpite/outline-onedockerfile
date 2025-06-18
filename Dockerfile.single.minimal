@@ -60,7 +60,7 @@ RUN chmod +x /usr/local/bin/* && \
     chmod +x /usr/local/bin/reset-xfce4-defaults
 
 # Environment
-ENV NODE_ENV=development \
+ENV NODE_ENV=production \
     DISPLAY=:1 \
     DEBIAN_FRONTEND=noninteractive \
     XDG_CURRENT_DESKTOP=XFCE \
