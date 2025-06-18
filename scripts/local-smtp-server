@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 // Simple SMTP server that logs emails instead of sending them
 
+// Change to outline directory to access node_modules
+process.chdir('/home/ubuntu/outline');
+
 const SMTPServer = require('smtp-server').SMTPServer;
 const simpleParser = require('mailparser').simpleParser;
 

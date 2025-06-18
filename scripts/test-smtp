@@ -7,7 +7,7 @@ echo "🧪 Testing local SMTP server..."
 if ! nc -z 127.0.0.1 1025 2>/dev/null; then
     echo "❌ SMTP server not running on port 1025"
     echo "Starting SMTP server..."
-    /usr/local/bin/local-smtp-server &
+    cd /home/ubuntu/outline && /usr/local/bin/local-smtp-server &
     sleep 3
 fi
 

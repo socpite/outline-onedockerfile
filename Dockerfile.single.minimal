@@ -3,9 +3,8 @@
 
 FROM node:20-slim AS runtime
 
-# Set all environment variables at the beginning
-ENV NODE_ENV=production \
-    DATABASE_URL="postgres://outline:outline_password@127.0.0.1:5432/outline?sslmode=disable" \
+# Set runtime environment variables (will override NODE_ENV after build)
+ENV DATABASE_URL="postgres://outline:outline_password@127.0.0.1:5432/outline?sslmode=disable" \
     REDIS_URL="redis://127.0.0.1:6379" \
     SECRET_KEY="c4c6f859fe10406fcee1b909d273bb741517b2136b3c40759f674206ac5e2d62" \
     UTILS_SECRET="310999ab7bd1349808c3efa0e03abdef0e69b1ff9618bb6f1e996ab3ea201240" \
@@ -67,15 +66,18 @@ RUN UBUNTU_UID=$(id -u ubuntu) && \
     mkdir -p /tmp/.ICE-unix && \
     chmod 1777 /tmp/.ICE-unix
 
-# Clone Outline source, install dependencies, and build
+# Clone Outline source, install dependencies (in development mode), and build
 WORKDIR /home/ubuntu/outline
 RUN git clone https://github.com/outline/outline.git . && \
     chmod -R 777 /home/ubuntu/outline && \
     yarn config set registry https://registry.npmjs.org && \
-    yarn install --network-timeout 1000000 && \
+    NODE_ENV=development yarn install --network-timeout 1000000 && \
     yarn add smtp-server mailparser && \
-    yarn build && \
+    NODE_ENV=development yarn build && \
     chown -R ubuntu:ubuntu /home/ubuntu/outline
+
+# Set production environment for runtime
+ENV NODE_ENV=production
 
 # Copy configuration files
 COPY dinit.d/ /etc/dinit.d/

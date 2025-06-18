@@ -1,5 +1,6 @@
 type = process
 command = /usr/local/bin/simple-smtp-server
+working-dir = /home/ubuntu/outline
 restart = true
 run-as = ubuntu
 depends-on = outline
