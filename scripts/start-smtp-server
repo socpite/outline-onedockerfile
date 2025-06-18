@@ -1,0 +1,18 @@
+#!/bin/bash
+# SMTP server startup script with proper environment setup
+
+# Wait for outline directory to be ready
+while [ ! -d "/home/ubuntu/outline/node_modules" ]; do
+    echo "Waiting for outline node_modules to be available..."
+    sleep 2
+done
+
+# Change to outline directory
+cd /home/ubuntu/outline
+
+# Set NODE_PATH to find modules
+export NODE_PATH="/home/ubuntu/outline/node_modules"
+
+# Start the SMTP server
+echo "Starting SMTP server with NODE_PATH=$NODE_PATH"
+exec node /usr/local/bin/local-smtp-server

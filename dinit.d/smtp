@@ -1,7 +1,7 @@
 type = process
-command = /bin/bash -c "cd /home/ubuntu/outline && export NODE_PATH=/home/ubuntu/outline/node_modules && exec node /usr/local/bin/local-smtp-server"
+command = /usr/local/bin/start-smtp-server
 working-dir = /home/ubuntu/outline
 restart = true
 run-as = ubuntu
-depends-on = outline
+depends-on = outline-setup
 logfile = /var/log/dinit/smtp.log
