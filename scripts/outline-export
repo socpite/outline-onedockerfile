@@ -94,48 +94,90 @@ export_database_json() {
     local json_file="$EXPORT_DIR/workspace.json"
     log "Exporting database to JSON: $json_file"
     
-    # Use psql to export data as JSON directly
-    log "Exporting tables to JSON using psql..."
+    # Check if python3 is available for clean JSON export
+    if ! command -v python3 &> /dev/null; then
+        error "python3 is required for JSON export. Please install python3."
+    fi
     
-    # Create properly formatted JSON header
-    cat > "$json_file" << EOF
-{
-  "version": "1.0",
-  "exportedAt": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
-EOF
+    # Create Python script for clean JSON export
+    cat > /tmp/export_json.py << 'PYTHON_SCRIPT'
+import json
+import sys
+import subprocess
+import os
+from datetime import datetime
+
+def run_sql(sql, database_url):
+    """Execute SQL command using psql and return result"""
+    try:
+        result = subprocess.run(['psql', database_url, '-t', '-c', sql], 
+                              capture_output=True, text=True, check=True)
+        return result.stdout.strip()
+    except subprocess.CalledProcessError as e:
+        return None
+
+def export_table(table_name, database_url):
+    """Export a table as clean JSON array"""
+    sql = f"SELECT COALESCE(json_agg(row_to_json({table_name}.*)), '[]'::json) FROM {table_name};"
+    result = run_sql(sql, database_url)
     
-    # Export each table as JSON
-    local tables=("teams" "users" "collections" "documents" "attachments" "shares" "stars" "pins" "views" "memberships" "groups" "group_users")
+    if result:
+        try:
+            # Parse and re-serialize to ensure clean JSON
+            data = json.loads(result)
+            return data
+        except json.JSONDecodeError:
+            print(f"Warning: Failed to parse JSON for table {table_name}")
+            return []
+    else:
+        print(f"Warning: Failed to export table {table_name}")
+        return []
+
+def main():
+    if len(sys.argv) != 3:
+        print("Usage: python3 export_json.py <database_url> <output_file>")
+        sys.exit(1)
     
-    for i in "${!tables[@]}"; do
-        local table="${tables[$i]}"
-        log "Exporting table: $table"
-        
-        echo "  \"$table\": " >> "$json_file"
-        
-        # Export table data as JSON array
-        if psql "$DATABASE_URL" -t -c "SELECT COALESCE(json_agg(row_to_json($table.*)), '[]'::json) FROM $table;" >> "$json_file" 2>/dev/null; then
-            # Add comma if not the last table
-            if [[ $i -lt $((${#tables[@]} - 1)) ]]; then
-                echo "," >> "$json_file"
-            fi
+    database_url = sys.argv[1]
+    output_file = sys.argv[2]
+    
+    # Export all tables
+    tables = ["teams", "users", "collections", "documents", "attachments", 
+              "shares", "stars", "pins", "views", "memberships", "groups", "group_users"]
+    
+    export_data = {
+        "version": "1.0",
+        "exportedAt": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    }
+    
+    for table in tables:
+        print(f"Exporting table: {table}")
+        export_data[table] = export_table(table, database_url)
+    
+    # Write clean JSON
+    with open(output_file, 'w') as f:
+        json.dump(export_data, f, indent=2, ensure_ascii=False)
+    
+    print(f"Export completed: {output_file}")
+
+if __name__ == "__main__":
+    main()
+PYTHON_SCRIPT
+    
+    # Run the Python export script
+    if python3 /tmp/export_json.py "$DATABASE_URL" "$json_file"; then
+        if [[ -f "$json_file" ]]; then
+            local size=$(du -h "$json_file" | cut -f1)
+            success "Database exported to JSON ($size)"
         else
-            warn "Failed to export table: $table"
-            echo "[]" >> "$json_file"
-            if [[ $i -lt $((${#tables[@]} - 1)) ]]; then
-                echo "," >> "$json_file"
-            fi
+            error "Failed to create JSON file"
         fi
-    done
-    
-    echo "}" >> "$json_file"
-    
-    if [[ -f "$json_file" ]]; then
-        local size=$(du -h "$json_file" | cut -f1)
-        success "Database exported to JSON ($size)"
     else
         error "Failed to export database to JSON"
     fi
+    
+    # Clean up
+    rm -f /tmp/export_json.py
 }
 
 export_files() {
