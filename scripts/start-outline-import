@@ -59,11 +59,11 @@ fi
 echo "✅ Database ready with $TABLE_COUNT tables"
 echo "🚀 Starting Outline server..."
 
-# Check if yarn is available
-if ! command -v yarn > /dev/null 2>&1; then
-    echo "❌ yarn not found. Install yarn or use node directly."
-    exit 1
-fi
-
 # Start the server
-exec yarn start
+if command -v yarn > /dev/null 2>&1; then
+    echo "🚀 Starting with yarn..."
+    exec yarn start
+else
+    echo "🚀 Starting with node directly..."
+    exec node ./build/server/index.js
+fi
