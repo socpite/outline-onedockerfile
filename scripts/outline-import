@@ -305,6 +305,32 @@ def main():
                     if record.get("collectionId") is None:
                         print(f"Fixing document '{record.get('title', 'Unknown')}' - assigning to collection {first_collection_id}")
                         record["collectionId"] = first_collection_id
+                    
+                    # Check for missing content and fix it
+                    if record.get("content") is None and record.get("text"):
+                        print(f"Warning: Document '{record.get('title', 'Unknown')}' has missing content, generating from text")
+                        # Create basic ProseMirror structure from text
+                        text_content = record.get("text", "")
+                        record["content"] = {
+                            "type": "doc",
+                            "content": [
+                                {
+                                    "type": "paragraph",
+                                    "content": [
+                                        {
+                                            "type": "text",
+                                            "text": text_content
+                                        }
+                                    ]
+                                }
+                            ]
+                        }
+                    elif record.get("content") is None:
+                        print(f"Warning: Document '{record.get('title', 'Unknown')}' has no content or text")
+                        record["content"] = {
+                            "type": "doc",
+                            "content": [{"type": "paragraph"}]
+                        }
         
         # Import documents
         success, _ = import_table("documents", documents, database_url, force_mode)

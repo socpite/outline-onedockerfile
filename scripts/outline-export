@@ -76,6 +76,33 @@ check_database_connection() {
     success "Database connection verified"
 }
 
+validate_document_content() {
+    log "Validating document content..."
+    
+    # Check for documents with null content
+    local null_content_count=$(psql "$DATABASE_URL" -t -c "SELECT COUNT(*) FROM documents WHERE content IS NULL;" 2>/dev/null | tr -d ' ' || echo "0")
+    
+    if [[ "$null_content_count" -gt 0 ]]; then
+        warn "⚠️  Found $null_content_count documents with missing content!"
+        warn "   This usually happens when exporting too quickly after editing."
+        warn "   These documents will export with empty content."
+        echo ""
+        
+        # Show which documents have issues
+        psql "$DATABASE_URL" -c "SELECT title, \"updatedAt\" FROM documents WHERE content IS NULL ORDER BY \"updatedAt\" DESC;" 2>/dev/null || true
+        echo ""
+        
+        read -p "Continue with export anyway? (y/N): " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            echo "Export cancelled. Please wait a few seconds and try again."
+            exit 0
+        fi
+    else
+        log "All documents have valid content"
+    fi
+}
+
 export_database_sql() {
     local sql_file="$EXPORT_DIR/database.sql"
     log "Exporting database to SQL: $sql_file"
@@ -336,8 +363,15 @@ echo "📋 Format: $FORMAT"
 echo "📎 Include files: $INCLUDE_FILES"
 echo ""
 
+# Warning about export timing
+warn "⚠️  IMPORTANT: If you just edited documents, wait 5-10 seconds before exporting"
+warn "   to ensure all changes are saved. Exporting too quickly after edits may"
+warn "   result in missing document content due to autosave timing."
+echo ""
+
 check_dependencies
 check_database_connection
+validate_document_content
 
 # Create export directory
 mkdir -p "$EXPORT_DIR"
