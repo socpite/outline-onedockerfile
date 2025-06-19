@@ -227,7 +227,7 @@ def import_table(table_name, records, database_url, force_mode):
     """Import records into a table"""
     if not records:
         print(f"No data found for table: {table_name}")
-        return True
+        return True, {}
     
     print(f"Importing {len(records)} records to {table_name}...")
     
@@ -262,7 +262,7 @@ def import_table(table_name, records, database_url, force_mode):
             print(f"Warning: Failed to import record in {table_name}: {error}")
     
     print(f"✓ Imported {success_count}/{len(records)} records to {table_name}")
-    return success_count > 0
+    return success_count > 0, {}
 
 def main():
     if len(sys.argv) != 4:
@@ -282,12 +282,38 @@ def main():
         sys.exit(1)
     
     # Import tables in dependency order
-    tables = ["teams", "users", "collections", "groups", "documents", "attachments", 
-              "shares", "stars", "pins", "views", "memberships", "group_users"]
+    tables = ["teams", "users", "collections", "groups"]
     
+    # Import core tables first
     for table in tables:
         records = data.get(table, [])
-        import_table(table, records, database_url, force_mode)
+        success, _ = import_table(table, records, database_url, force_mode)
+    
+    # Special handling for documents - fix null collectionIds
+    documents = data.get("documents", [])
+    if documents:
+        # Get the first available collection from database
+        success, result = run_sql('SELECT id FROM collections LIMIT 1;', database_url)
+        if success and result:
+            lines = result.strip().split('\n')
+            if len(lines) >= 3:  # Skip header and separator
+                first_collection_id = lines[2].strip()
+                print(f"Found collection in database: {first_collection_id}")
+                
+                # Fix documents with null collectionId
+                for record in documents:
+                    if record.get("collectionId") is None:
+                        print(f"Fixing document '{record.get('title', 'Unknown')}' - assigning to collection {first_collection_id}")
+                        record["collectionId"] = first_collection_id
+        
+        # Import documents
+        success, _ = import_table("documents", documents, database_url, force_mode)
+    
+    # Import remaining tables
+    remaining_tables = ["attachments", "shares", "stars", "pins", "views", "memberships", "group_users"]
+    for table in remaining_tables:
+        records = data.get(table, [])
+        success, _ = import_table(table, records, database_url, force_mode)
     
     print("Database import completed!")
 
