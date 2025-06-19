@@ -1,0 +1,89 @@
+#!/bin/bash
+# Minimal setup for import workflow - no database creation/migration/start
+# Use this when you plan to import data manually with outline-cli
+
+set -e
+
+echo "🚀 Setting up Outline for import workflow..."
+
+# Check if already set up
+if [ -f /home/ubuntu/outline/.import-ready ]; then
+    echo "✅ Import workflow setup already complete!"
+    exit 0
+fi
+
+# Wait for PostgreSQL and Redis to be ready
+echo "⏳ Waiting for services to be ready..."
+for i in {1..60}; do
+    if sudo -u postgres pg_isready > /dev/null 2>&1 && redis-cli ping > /dev/null 2>&1; then
+        echo "✅ Services are ready!"
+        break
+    fi
+    echo "   Waiting for PostgreSQL and Redis... ($i/60)"
+    sleep 2
+done
+
+# Create outline user if it doesn't exist
+sudo -u postgres psql -tc "SELECT 1 FROM pg_user WHERE usename = 'outline'" | grep -q 1 || {
+    echo "📋 Creating outline user..."
+    sudo -u postgres psql -c "CREATE USER outline WITH PASSWORD 'outline_password';"
+}
+
+echo "📋 Granting user privileges..."
+sudo -u postgres psql -c "ALTER USER outline CREATEDB;"
+sudo -u postgres psql -c "ALTER USER outline CREATEROLE;"
+
+# Generate secure secrets
+SECRET_KEY=$(openssl rand -hex 32)
+UTILS_SECRET=$(openssl rand -hex 32)
+
+# Set environment variables
+echo "🌍 Setting production environment variables..."
+mkdir -p /home/ubuntu/outline
+cat > /home/ubuntu/outline/.env << ENVEOF
+NODE_ENV=production
+DATABASE_URL="postgres://outline:outline_password@127.0.0.1:5432/outline?sslmode=disable"
+REDIS_URL="redis://127.0.0.1:6379"
+SECRET_KEY="$SECRET_KEY"
+UTILS_SECRET="$UTILS_SECRET"
+URL="http://localhost:3000"
+FORCE_HTTPS=false
+FILE_STORAGE=local
+FILE_STORAGE_LOCAL_ROOT_DIR=/var/lib/outline/data
+LOG_LEVEL=info
+
+# Enable Email Authentication
+ENABLED_PLUGINS=email
+SMTP_HOST=127.0.0.1
+SMTP_PORT=1025
+SMTP_USERNAME=
+SMTP_PASSWORD=
+SMTP_FROM_EMAIL=noreply@outline.local
+SMTP_REPLY_EMAIL=support@outline.local
+SMTP_SECURE=false
+ENVEOF
+
+# Build the application (needed for production)
+echo "🔨 Building Outline application..."
+cd /home/ubuntu/outline
+yarn build
+
+# Set minimal file ownership (optimized for speed)
+echo "📋 Setting file ownership..."
+chown ubuntu:ubuntu /home/ubuntu/outline
+chown ubuntu:ubuntu /home/ubuntu/outline/.env
+chown ubuntu:ubuntu /home/ubuntu/outline/build 2>/dev/null || true
+chown -R ubuntu:ubuntu /var/lib/outline
+
+# Create a marker file to indicate setup is complete
+touch /home/ubuntu/outline/.import-ready
+
+echo "✅ Import workflow setup complete!"
+echo ""
+echo "📋 Next steps:"
+echo "   1. Import your data: outline-cli import-full -d /path/to/backup --force"
+echo "   2. Start Outline: cd /home/ubuntu/outline && yarn start"
+echo ""
+echo "🌐 Outline will be available at: http://localhost:3000"
+echo "📧 SMTP server will capture login emails on port 1025"
+echo "🖥️  VNC Desktop available at: http://localhost:6080/vnc.html"

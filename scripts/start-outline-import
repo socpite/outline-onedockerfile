@@ -1,0 +1,42 @@
+#!/bin/bash
+# Start Outline server (use after import)
+
+set -e
+
+cd /home/ubuntu/outline
+
+# Check if setup is complete
+if [ ! -f /home/ubuntu/outline/.import-ready ] && [ ! -f /home/ubuntu/outline/.production-ready ]; then
+    echo "❌ Setup not complete. Run setup-outline-import first."
+    exit 1
+fi
+
+# Check if environment exists
+if [ ! -f /home/ubuntu/outline/.env ]; then
+    echo "❌ Environment file missing. Run setup first."
+    exit 1
+fi
+
+# Load environment
+source /home/ubuntu/outline/.env
+
+# Check database connection
+echo "🔍 Checking database connection..."
+if ! psql "$DATABASE_URL" -c "SELECT 1;" > /dev/null 2>&1; then
+    echo "❌ Database connection failed. Check if data is imported."
+    exit 1
+fi
+
+# Check if database has data
+TABLE_COUNT=$(psql "$DATABASE_URL" -t -c "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = 'public';" 2>/dev/null | tr -d ' ' || echo "0")
+if [ "$TABLE_COUNT" -eq 0 ]; then
+    echo "❌ Database is empty. Import your data first with:"
+    echo "   outline-cli import-full -d /path/to/backup --force"
+    exit 1
+fi
+
+echo "✅ Database ready with $TABLE_COUNT tables"
+echo "🚀 Starting Outline server..."
+
+# Start the server
+exec yarn start
