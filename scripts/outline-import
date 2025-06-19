@@ -306,6 +306,146 @@ PYTHON_SCRIPT
     rm -f /tmp/import_json.py
 }
 
+fix_database_issues() {
+    if [[ "$DRY_RUN" == true ]]; then
+        log "[DRY RUN] Would fix database consistency issues"
+        return
+    fi
+    
+    log "Fixing database consistency issues..."
+    
+    # Fix NULL array fields that should be empty arrays
+    local fixes_applied=0
+    
+    # Fix collaboratorIds in documents table
+    local collaborator_count=$(psql "$DATABASE_URL" -t -c "SELECT COUNT(*) FROM documents WHERE \"collaboratorIds\" IS NULL;" 2>/dev/null | tr -d ' ' || echo "0")
+    if [[ "$collaborator_count" -gt 0 ]]; then
+        psql "$DATABASE_URL" -c "UPDATE documents SET \"collaboratorIds\" = '{}' WHERE \"collaboratorIds\" IS NULL;" >/dev/null 2>&1
+        log "Fixed $collaborator_count documents with NULL collaboratorIds"
+        fixes_applied=$((fixes_applied + collaborator_count))
+    fi
+    
+    # Fix other common NULL array fields
+    local tables_and_fields=(
+        "users:notificationSettings"
+        "collections:membershipIds" 
+        "teams:allowedDomains"
+        "documents:templateId"
+    )
+    
+    for table_field in "${tables_and_fields[@]}"; do
+        local table="${table_field%:*}"
+        local field="${table_field#*:}"
+        
+        # Check if table and field exist before trying to fix
+        local field_exists=$(psql "$DATABASE_URL" -t -c "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='$table' AND column_name='$field';" 2>/dev/null | tr -d ' ' || echo "0")
+        
+        if [[ "$field_exists" -gt 0 ]]; then
+            # Check field type to determine appropriate fix
+            local field_type=$(psql "$DATABASE_URL" -t -c "SELECT data_type FROM information_schema.columns WHERE table_name='$table' AND column_name='$field';" 2>/dev/null | tr -d ' ' || echo "")
+            
+            if [[ "$field_type" == *"ARRAY"* || "$field_type" == *"array"* ]]; then
+                # Fix array fields
+                local null_count=$(psql "$DATABASE_URL" -t -c "SELECT COUNT(*) FROM \"$table\" WHERE \"$field\" IS NULL;" 2>/dev/null | tr -d ' ' || echo "0")
+                if [[ "$null_count" -gt 0 ]]; then
+                    psql "$DATABASE_URL" -c "UPDATE \"$table\" SET \"$field\" = '{}' WHERE \"$field\" IS NULL;" >/dev/null 2>&1
+                    log "Fixed $null_count $table records with NULL $field"
+                    fixes_applied=$((fixes_applied + null_count))
+                fi
+            elif [[ "$field_type" == *"json"* ]]; then
+                # Fix JSON fields
+                local null_count=$(psql "$DATABASE_URL" -t -c "SELECT COUNT(*) FROM \"$table\" WHERE \"$field\" IS NULL;" 2>/dev/null | tr -d ' ' || echo "0")
+                if [[ "$null_count" -gt 0 ]]; then
+                    psql "$DATABASE_URL" -c "UPDATE \"$table\" SET \"$field\" = '{}' WHERE \"$field\" IS NULL;" >/dev/null 2>&1
+                    log "Fixed $null_count $table records with NULL $field"
+                    fixes_applied=$((fixes_applied + null_count))
+                fi
+            fi
+        fi
+    done
+    
+    # Fix foreign key references that might be broken
+    log "Checking foreign key consistency..."
+    
+    # Remove documents with invalid collection references
+    local orphan_count=$(psql "$DATABASE_URL" -t -c "SELECT COUNT(*) FROM documents WHERE \"collectionId\" IS NOT NULL AND \"collectionId\" NOT IN (SELECT id FROM collections);" 2>/dev/null | tr -d ' ' || echo "0")
+    if [[ "$orphan_count" -gt 0 ]]; then
+        psql "$DATABASE_URL" -c "DELETE FROM documents WHERE \"collectionId\" IS NOT NULL AND \"collectionId\" NOT IN (SELECT id FROM collections);" >/dev/null 2>&1
+        log "Removed $orphan_count orphaned documents"
+        fixes_applied=$((fixes_applied + orphan_count))
+    fi
+    
+    # Remove memberships with invalid user/team references
+    local orphan_count=$(psql "$DATABASE_URL" -t -c "SELECT COUNT(*) FROM memberships WHERE \"userId\" NOT IN (SELECT id FROM users) OR \"teamId\" NOT IN (SELECT id FROM teams);" 2>/dev/null | tr -d ' ' || echo "0")
+    if [[ "$orphan_count" -gt 0 ]]; then
+        psql "$DATABASE_URL" -c "DELETE FROM memberships WHERE \"userId\" NOT IN (SELECT id FROM users) OR \"teamId\" NOT IN (SELECT id FROM teams);" >/dev/null 2>&1
+        log "Removed $orphan_count orphaned memberships"
+        fixes_applied=$((fixes_applied + orphan_count))
+    fi
+    
+    if [[ "$fixes_applied" -gt 0 ]]; then
+        success "Applied $fixes_applied database fixes"
+    else
+        log "No database issues found"
+    fi
+}
+
+fix_user_permissions() {
+    if [[ "$DRY_RUN" == true ]]; then
+        log "[DRY RUN] Would fix user permissions for imported collections"
+        return
+    fi
+    
+    log "Setting up user permissions for imported collections..."
+    
+    # Get all users and collections
+    local users=$(psql "$DATABASE_URL" -t -c "SELECT id FROM users;" 2>/dev/null | tr -d ' ' | grep -v '^$' || echo "")
+    local collections=$(psql "$DATABASE_URL" -t -c "SELECT id FROM collections;" 2>/dev/null | tr -d ' ' | grep -v '^$' || echo "")
+    
+    if [[ -z "$users" ]]; then
+        warn "No users found - skipping permission setup"
+        return
+    fi
+    
+    if [[ -z "$collections" ]]; then
+        log "No collections found - skipping permission setup"
+        return
+    fi
+    
+    local permissions_added=0
+    
+    # For each collection, ensure at least one user has access
+    while IFS= read -r collection_id; do
+        [[ -z "$collection_id" ]] && continue
+        
+        # Check if any user already has permission to this collection
+        local existing_perms=$(psql "$DATABASE_URL" -t -c "SELECT COUNT(*) FROM user_permissions WHERE \"collectionId\" = '$collection_id';" 2>/dev/null | tr -d ' ' || echo "0")
+        
+        if [[ "$existing_perms" -eq 0 ]]; then
+            # No permissions exist, grant access to the first user (usually admin)
+            local first_user=$(echo "$users" | head -n1)
+            
+            if [[ -n "$first_user" ]]; then
+                psql "$DATABASE_URL" -c "
+                INSERT INTO user_permissions (\"collectionId\", \"userId\", permission, \"createdById\", \"createdAt\", \"updatedAt\") 
+                VALUES ('$collection_id', '$first_user', 'read_write', '$first_user', NOW(), NOW())
+                ON CONFLICT DO NOTHING;" >/dev/null 2>&1
+                
+                if [[ $? -eq 0 ]]; then
+                    permissions_added=$((permissions_added + 1))
+                fi
+            fi
+        fi
+    done <<< "$collections"
+    
+    if [[ "$permissions_added" -gt 0 ]]; then
+        success "Added permissions for $permissions_added collections"
+        log "Users can now access imported collections"
+    else
+        log "All collections already have user permissions"
+    fi
+}
+
 import_files() {
     if [[ "$SKIP_FILES" == true ]]; then
         log "Skipping file attachments import"
@@ -445,6 +585,12 @@ if [[ "$SKIP_DATABASE" != true ]]; then
     else
         error "No database file found to import"
     fi
+    
+    # Fix database consistency issues after import
+    fix_database_issues
+    
+    # Fix user permissions for imported collections
+    fix_user_permissions
 fi
 
 # Import files

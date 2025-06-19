@@ -1,0 +1,273 @@
+#!/bin/bash
+# Outline Database Fix Script
+# Fixes common database consistency issues after import
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+log() {
+    echo -e "${BLUE}[INFO]${NC} $1"
+}
+
+success() {
+    echo -e "${GREEN}[SUCCESS]${NC} $1"
+}
+
+warn() {
+    echo -e "${YELLOW}[WARN]${NC} $1"
+}
+
+error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+    exit 1
+}
+
+usage() {
+    echo "Usage: $0 [OPTIONS]"
+    echo ""
+    echo "Fix common Outline database consistency issues"
+    echo ""
+    echo "Options:"
+    echo "  --dry-run            Show what would be fixed without doing it"
+    echo "  -v, --verbose        Verbose output"
+    echo "  -h, --help           Show this help"
+    echo ""
+    echo "Examples:"
+    echo "  $0                   # Fix database issues"
+    echo "  $0 --dry-run         # Show what would be fixed"
+    echo "  $0 --verbose         # Verbose output"
+}
+
+DRY_RUN=false
+VERBOSE=false
+
+# Parse command line arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        -v|--verbose)
+            VERBOSE=true
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            error "Unknown option: $1"
+            ;;
+    esac
+done
+
+# Check for DATABASE_URL
+if [[ -z "$DATABASE_URL" ]]; then
+    error "DATABASE_URL environment variable is required."
+fi
+
+check_database_connection() {
+    log "Checking database connection..."
+    
+    if ! psql "$DATABASE_URL" -c "SELECT 1;" &> /dev/null; then
+        error "Cannot connect to database. Check DATABASE_URL environment variable."
+    fi
+    
+    success "Database connection verified"
+}
+
+fix_database_issues() {
+    if [[ "$DRY_RUN" == true ]]; then
+        log "DRY RUN MODE - No changes will be made"
+        echo ""
+    fi
+    
+    log "Analyzing database for consistency issues..."
+    
+    local fixes_applied=0
+    
+    # Fix NULL array fields that should be empty arrays
+    log "Checking for NULL array fields..."
+    
+    # Fix collaboratorIds in documents table
+    if [[ "$DRY_RUN" == true ]]; then
+        local collaborator_count=$(psql "$DATABASE_URL" -t -c "SELECT COUNT(*) FROM documents WHERE \"collaboratorIds\" IS NULL;" 2>/dev/null | tr -d ' ' || echo "0")
+        if [[ "$collaborator_count" -gt 0 ]]; then
+            log "[DRY RUN] Would fix $collaborator_count documents with NULL collaboratorIds"
+        fi
+    else
+        # Use a different approach to get the count of updated rows
+        local collaborator_count=$(psql "$DATABASE_URL" -t -c "SELECT COUNT(*) FROM documents WHERE \"collaboratorIds\" IS NULL;" 2>/dev/null | tr -d ' ' || echo "0")
+        if [[ "$collaborator_count" -gt 0 ]]; then
+            psql "$DATABASE_URL" -c "UPDATE documents SET \"collaboratorIds\" = '{}' WHERE \"collaboratorIds\" IS NULL;" >/dev/null 2>&1
+            success "Fixed $collaborator_count documents with NULL collaboratorIds"
+            fixes_applied=$((fixes_applied + collaborator_count))
+        elif [[ "$VERBOSE" == true ]]; then
+            log "No documents with NULL collaboratorIds found"
+        fi
+    fi
+    
+    # Check other common NULL array/JSON fields
+    local tables_and_fields=(
+        "users:notificationSettings:json"
+        "collections:membershipIds:array" 
+        "teams:allowedDomains:array"
+    )
+    
+    for table_field_type in "${tables_and_fields[@]}"; do
+        local table="${table_field_type%%:*}"
+        local field_type="${table_field_type#*:}"
+        local field="${field_type%:*}"
+        local data_type="${field_type##*:}"
+        
+        # Check if table and field exist before trying to fix
+        local field_exists=$(psql "$DATABASE_URL" -t -c "SELECT COUNT(*) FROM information_schema.columns WHERE table_name='$table' AND column_name='$field';" 2>/dev/null | tr -d ' ' || echo "0")
+        
+        if [[ "$field_exists" -gt 0 ]]; then
+            if [[ "$DRY_RUN" == true ]]; then
+                local null_count=$(psql "$DATABASE_URL" -t -c "SELECT COUNT(*) FROM \"$table\" WHERE \"$field\" IS NULL;" 2>/dev/null | tr -d ' ' || echo "0")
+                if [[ "$null_count" -gt 0 ]]; then
+                    log "[DRY RUN] Would fix $null_count $table records with NULL $field"
+                fi
+            else
+                # Count first, then update
+                local null_count=$(psql "$DATABASE_URL" -t -c "SELECT COUNT(*) FROM \"$table\" WHERE \"$field\" IS NULL;" 2>/dev/null | tr -d ' ' || echo "0")
+                if [[ "$null_count" -gt 0 ]]; then
+                    psql "$DATABASE_URL" -c "UPDATE \"$table\" SET \"$field\" = '{}' WHERE \"$field\" IS NULL;" >/dev/null 2>&1
+                    success "Fixed $null_count $table records with NULL $field"
+                    fixes_applied=$((fixes_applied + null_count))
+                elif [[ "$VERBOSE" == true ]]; then
+                    log "No $table records with NULL $field found"
+                fi
+            fi
+        elif [[ "$VERBOSE" == true ]]; then
+            log "Field $field not found in table $table (skipping)"
+        fi
+    done
+    
+    # Check foreign key consistency
+    log "Checking foreign key consistency..."
+    
+    # Check for documents with invalid collection references
+    if [[ "$DRY_RUN" == true ]]; then
+        local orphan_docs=$(psql "$DATABASE_URL" -t -c "SELECT COUNT(*) FROM documents WHERE \"collectionId\" IS NOT NULL AND \"collectionId\" NOT IN (SELECT id FROM collections);" 2>/dev/null | tr -d ' ' || echo "0")
+        if [[ "$orphan_docs" -gt 0 ]]; then
+            log "[DRY RUN] Would remove $orphan_docs orphaned documents"
+        fi
+    else
+        # Count first, then delete
+        local orphan_count=$(psql "$DATABASE_URL" -t -c "SELECT COUNT(*) FROM documents WHERE \"collectionId\" IS NOT NULL AND \"collectionId\" NOT IN (SELECT id FROM collections);" 2>/dev/null | tr -d ' ' || echo "0")
+        if [[ "$orphan_count" -gt 0 ]]; then
+            psql "$DATABASE_URL" -c "DELETE FROM documents WHERE \"collectionId\" IS NOT NULL AND \"collectionId\" NOT IN (SELECT id FROM collections);" >/dev/null 2>&1
+            success "Removed $orphan_count orphaned documents"
+            fixes_applied=$((fixes_applied + orphan_count))
+        elif [[ "$VERBOSE" == true ]]; then
+            log "No orphaned documents found"
+        fi
+    fi
+    
+    # Check for memberships with invalid user/team references
+    if [[ "$DRY_RUN" == true ]]; then
+        local orphan_memberships=$(psql "$DATABASE_URL" -t -c "SELECT COUNT(*) FROM memberships WHERE \"userId\" NOT IN (SELECT id FROM users) OR \"teamId\" NOT IN (SELECT id FROM teams);" 2>/dev/null | tr -d ' ' || echo "0")
+        if [[ "$orphan_memberships" -gt 0 ]]; then
+            log "[DRY RUN] Would remove $orphan_memberships orphaned memberships"
+        fi
+    else
+        # Count first, then delete
+        local orphan_count=$(psql "$DATABASE_URL" -t -c "SELECT COUNT(*) FROM memberships WHERE \"userId\" NOT IN (SELECT id FROM users) OR \"teamId\" NOT IN (SELECT id FROM teams);" 2>/dev/null | tr -d ' ' || echo "0")
+        if [[ "$orphan_count" -gt 0 ]]; then
+            psql "$DATABASE_URL" -c "DELETE FROM memberships WHERE \"userId\" NOT IN (SELECT id FROM users) OR \"teamId\" NOT IN (SELECT id FROM teams);" >/dev/null 2>&1
+            success "Removed $orphan_count orphaned memberships"
+            fixes_applied=$((fixes_applied + orphan_count))
+        elif [[ "$VERBOSE" == true ]]; then
+            log "No orphaned memberships found"
+        fi
+    fi
+    
+    echo ""
+    if [[ "$DRY_RUN" == true ]]; then
+        success "Database analysis completed - no changes made"
+    elif [[ "$fixes_applied" -gt 0 ]]; then
+        success "Applied $fixes_applied database fixes"
+        echo ""
+        log "Database consistency issues have been resolved!"
+        log "You may need to restart Outline for all changes to take effect."
+    else
+        success "No database issues found - your database is healthy!"
+    fi
+}
+
+fix_user_permissions() {
+    if [[ "$DRY_RUN" == true ]]; then
+        log "Checking user permissions for collections..."
+        local collections_without_perms=$(psql "$DATABASE_URL" -t -c "SELECT COUNT(*) FROM collections c WHERE NOT EXISTS (SELECT 1 FROM user_permissions up WHERE up.\"collectionId\" = c.id);" 2>/dev/null | tr -d ' ' || echo "0")
+        if [[ "$collections_without_perms" -gt 0 ]]; then
+            log "[DRY RUN] Would fix permissions for $collections_without_perms collections"
+        fi
+        return
+    fi
+    
+    log "Checking user permissions for collections..."
+    
+    # Get all users and collections
+    local users=$(psql "$DATABASE_URL" -t -c "SELECT id FROM users;" 2>/dev/null | tr -d ' ' | grep -v '^$' || echo "")
+    local collections=$(psql "$DATABASE_URL" -t -c "SELECT id FROM collections;" 2>/dev/null | tr -d ' ' | grep -v '^$' || echo "")
+    
+    if [[ -z "$users" ]]; then
+        warn "No users found - skipping permission setup"
+        return
+    fi
+    
+    if [[ -z "$collections" ]]; then
+        log "No collections found - skipping permission setup"
+        return
+    fi
+    
+    local permissions_added=0
+    
+    # For each collection, ensure at least one user has access
+    while IFS= read -r collection_id; do
+        [[ -z "$collection_id" ]] && continue
+        
+        # Check if any user already has permission to this collection
+        local existing_perms=$(psql "$DATABASE_URL" -t -c "SELECT COUNT(*) FROM user_permissions WHERE \"collectionId\" = '$collection_id';" 2>/dev/null | tr -d ' ' || echo "0")
+        
+        if [[ "$existing_perms" -eq 0 ]]; then
+            # No permissions exist, grant access to the first user (usually admin)
+            local first_user=$(echo "$users" | head -n1)
+            
+            if [[ -n "$first_user" ]]; then
+                psql "$DATABASE_URL" -c "
+                INSERT INTO user_permissions (\"collectionId\", \"userId\", permission, \"createdById\", \"createdAt\", \"updatedAt\") 
+                VALUES ('$collection_id', '$first_user', 'read_write', '$first_user', NOW(), NOW())
+                ON CONFLICT DO NOTHING;" >/dev/null 2>&1
+                
+                if [[ $? -eq 0 ]]; then
+                    permissions_added=$((permissions_added + 1))
+                fi
+            fi
+        fi
+    done <<< "$collections"
+    
+    if [[ "$permissions_added" -gt 0 ]]; then
+        success "Added permissions for $permissions_added collections"
+    elif [[ "$VERBOSE" == true ]]; then
+        log "All collections already have user permissions"
+    fi
+}
+
+# Main execution
+echo "🔧 Outline Database Fix Tool"
+echo "============================="
+echo ""
+
+check_database_connection
+fix_database_issues
+fix_user_permissions

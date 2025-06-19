@@ -84,10 +84,14 @@ yarn build
 echo "🗃️  Running database migrations..."
 DATABASE_URL="postgres://outline:outline_password@127.0.0.1:5432/outline?sslmode=disable" yarn db:migrate --env=production-ssl-disabled
 
-# Set proper ownership
+# Set proper ownership (optimized for speed)
 echo "📋 Setting file ownership..."
-chown -R ubuntu:ubuntu /home/ubuntu/outline
+# Only change ownership of specific directories that need it
+chown ubuntu:ubuntu /home/ubuntu/outline
+chown ubuntu:ubuntu /home/ubuntu/outline/.env 2>/dev/null || true
+chown ubuntu:ubuntu /home/ubuntu/outline/build 2>/dev/null || true
 chown -R ubuntu:ubuntu /var/lib/outline
+# Skip node_modules - it doesn't need ownership change for runtime
 
 # Create a marker file to indicate setup is complete
 touch /home/ubuntu/outline/.production-ready
