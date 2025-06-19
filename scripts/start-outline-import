@@ -3,7 +3,21 @@
 
 set -e
 
-cd /home/ubuntu/outline
+# Find outline directory
+OUTLINE_DIR=""
+if [ -d "/home/ubuntu/outline" ] && [ -f "/home/ubuntu/outline/package.json" ]; then
+    OUTLINE_DIR="/home/ubuntu/outline"
+elif [ -d "/opt/outline" ] && [ -f "/opt/outline/package.json" ]; then
+    OUTLINE_DIR="/opt/outline"
+else
+    echo "❌ Outline directory not found. Checked:"
+    echo "   - /home/ubuntu/outline"
+    echo "   - /opt/outline"
+    exit 1
+fi
+
+echo "📁 Using Outline directory: $OUTLINE_DIR"
+cd "$OUTLINE_DIR"
 
 # Check if setup is complete
 if [ ! -f /home/ubuntu/outline/.import-ready ] && [ ! -f /home/ubuntu/outline/.production-ready ]; then
@@ -12,13 +26,20 @@ if [ ! -f /home/ubuntu/outline/.import-ready ] && [ ! -f /home/ubuntu/outline/.p
 fi
 
 # Check if environment exists
-if [ ! -f /home/ubuntu/outline/.env ]; then
+ENV_FILE=""
+if [ -f /home/ubuntu/outline/.env ]; then
+    ENV_FILE="/home/ubuntu/outline/.env"
+elif [ -f "$OUTLINE_DIR/.env" ]; then
+    ENV_FILE="$OUTLINE_DIR/.env"
+else
     echo "❌ Environment file missing. Run setup first."
     exit 1
 fi
 
+echo "📋 Using environment file: $ENV_FILE"
+
 # Load environment
-source /home/ubuntu/outline/.env
+source "$ENV_FILE"
 
 # Check database connection
 echo "🔍 Checking database connection..."
@@ -37,6 +58,12 @@ fi
 
 echo "✅ Database ready with $TABLE_COUNT tables"
 echo "🚀 Starting Outline server..."
+
+# Check if yarn is available
+if ! command -v yarn > /dev/null 2>&1; then
+    echo "❌ yarn not found. Install yarn or use node directly."
+    exit 1
+fi
 
 # Start the server
 exec yarn start

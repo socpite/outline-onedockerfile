@@ -23,11 +23,14 @@ for i in {1..60}; do
     sleep 2
 done
 
-# Create outline user if it doesn't exist
-sudo -u postgres psql -tc "SELECT 1 FROM pg_user WHERE usename = 'outline'" | grep -q 1 || {
-    echo "📋 Creating outline user..."
-    sudo -u postgres psql -c "CREATE USER outline WITH PASSWORD 'outline_password';"
-}
+# Create outline user if it doesn't exist (run as postgres user to avoid permission issues)
+echo "📋 Creating outline user..."
+sudo -u postgres bash -c "
+    psql -tc \"SELECT 1 FROM pg_user WHERE usename = 'outline'\" | grep -q 1 || {
+        echo 'Creating outline user...'
+        psql -c \"CREATE USER outline WITH PASSWORD 'outline_password';\"
+    }
+"
 
 echo "📋 Granting user privileges..."
 sudo -u postgres psql -c "ALTER USER outline CREATEDB;"
@@ -37,9 +40,13 @@ sudo -u postgres psql -c "ALTER USER outline CREATEROLE;"
 SECRET_KEY=$(openssl rand -hex 32)
 UTILS_SECRET=$(openssl rand -hex 32)
 
+# Ensure outline directory exists and has proper permissions
+echo "📁 Setting up directories..."
+mkdir -p /home/ubuntu/outline
+mkdir -p /var/lib/outline/data
+
 # Set environment variables
 echo "🌍 Setting production environment variables..."
-mkdir -p /home/ubuntu/outline
 cat > /home/ubuntu/outline/.env << ENVEOF
 NODE_ENV=production
 DATABASE_URL="postgres://outline:outline_password@127.0.0.1:5432/outline?sslmode=disable"
@@ -63,16 +70,25 @@ SMTP_REPLY_EMAIL=support@outline.local
 SMTP_SECURE=false
 ENVEOF
 
-# Build the application (needed for production)
-echo "🔨 Building Outline application..."
-cd /home/ubuntu/outline
-yarn build
+# Build the application (check if yarn is available and outline source exists)
+if [ -d "/home/ubuntu/outline/app" ] && command -v yarn > /dev/null 2>&1; then
+    echo "🔨 Building Outline application..."
+    cd /home/ubuntu/outline
+    yarn build
+elif [ -d "/opt/outline/app" ] && command -v yarn > /dev/null 2>&1; then
+    echo "🔨 Building Outline application..."
+    cd /opt/outline
+    yarn build
+    # Copy .env to the correct location
+    cp /home/ubuntu/outline/.env /opt/outline/.env
+else
+    echo "⚠️  Skipping build - yarn not found or outline source not available"
+    echo "   This is normal if running in a pre-built container"
+fi
 
-# Set minimal file ownership (optimized for speed)
+# Set file ownership (optimized for speed)
 echo "📋 Setting file ownership..."
-chown ubuntu:ubuntu /home/ubuntu/outline
-chown ubuntu:ubuntu /home/ubuntu/outline/.env
-chown ubuntu:ubuntu /home/ubuntu/outline/build 2>/dev/null || true
+chown -R ubuntu:ubuntu /home/ubuntu/outline
 chown -R ubuntu:ubuntu /var/lib/outline
 
 # Create a marker file to indicate setup is complete
@@ -82,7 +98,7 @@ echo "✅ Import workflow setup complete!"
 echo ""
 echo "📋 Next steps:"
 echo "   1. Import your data: outline-cli import-full -d /path/to/backup --force"
-echo "   2. Start Outline: cd /home/ubuntu/outline && yarn start"
+echo "   2. Start Outline: start-outline-import"
 echo ""
 echo "🌐 Outline will be available at: http://localhost:3000"
 echo "📧 SMTP server will capture login emails on port 1025"
