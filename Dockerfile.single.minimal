@@ -72,7 +72,6 @@ COPY outline/ .
 RUN chmod -R 777 /home/ubuntu/outline && \
     yarn config set registry https://registry.npmjs.org && \
     NODE_ENV=development yarn install --network-timeout 1000000 && \
-    yarn add smtp-server mailparser && \
     NODE_ENV=development yarn build && \
     chown -R ubuntu:ubuntu /home/ubuntu/outline
 

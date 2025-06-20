@@ -46,16 +46,13 @@ The container includes a local SMTP server that captures login emails:
 # Watch for login emails (shows login links in console)
 watch-emails
 
-# Test SMTP server
-test-smtp
-
 # Fix Redis issues if they occur
 fix-redis
 ```
 
 **Login Process:**
 1. Enter any email address in the login form
-2. Check the `watch-emails` output for the login link
+2. Check the application logs for the login link (SMTP server removed)
 3. Copy and paste the login link in your browser
 4. You're logged in!
 
@@ -181,9 +178,6 @@ redis-cli ping
 ```bash
 # Watch for login emails
 watch-emails
-
-# Test SMTP server
-test-smtp
 ```
 
 #### Database Issues
