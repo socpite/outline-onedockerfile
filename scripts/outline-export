@@ -265,32 +265,41 @@ process.env.NODE_PATH = '/home/ubuntu/outline/node_modules';
 let Document, Collection, DocumentHelper;
 
 try {
-    // Try the build directory first
+    // Try the build directory first (compiled JavaScript)
     const models = require('./build/server/models');
     Document = models.Document;
     Collection = models.Collection;
     
     const helpers = require('./build/server/models/helpers/DocumentHelper');
     DocumentHelper = helpers.DocumentHelper;
+    console.log('Successfully loaded built modules');
 } catch (e1) {
     try {
-        // Try direct server imports
+        // Try direct server imports (TypeScript source)
         Document = require('./server/models/Document').default;
         Collection = require('./server/models/Collection').default;
         DocumentHelper = require('./server/models/helpers/DocumentHelper').DocumentHelper;
+        console.log('Successfully loaded source modules');
     } catch (e2) {
         try {
-            // Try without build directory
-            const models = require('./server/models');
+            // Try index file approach
+            const models = require('./build/server/models/index');
             Document = models.Document;
             Collection = models.Collection;
-            DocumentHelper = require('./server/models/helpers/DocumentHelper').DocumentHelper;
+            DocumentHelper = require('./build/server/models/helpers/DocumentHelper').DocumentHelper;
+            console.log('Successfully loaded modules via index');
         } catch (e3) {
-            console.error('Could not load Outline modules:', e3.message);
+            console.error('Could not load Outline modules:');
+            console.error('Error 1 (build):', e1.message);
+            console.error('Error 2 (source):', e2.message);
+            console.error('Error 3 (index):', e3.message);
             console.error('Available files in /home/ubuntu/outline:');
             try {
                 const files = fs.readdirSync('/home/ubuntu/outline');
                 console.error(files.join(', '));
+                console.error('Available files in /home/ubuntu/outline/build/server/models:');
+                const buildFiles = fs.readdirSync('/home/ubuntu/outline/build/server/models');
+                console.error(buildFiles.join(', '));
             } catch (e4) {
                 console.error('Could not list directory');
             }
