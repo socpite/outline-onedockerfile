@@ -265,34 +265,33 @@ process.env.NODE_PATH = '/home/ubuntu/outline/node_modules';
 let Document, Collection, DocumentHelper;
 
 try {
-    // Try the build directory first (compiled JavaScript)
-    const models = require('./build/server/models');
+    // Try the build directory first (compiled JavaScript) - use absolute paths
+    const models = require('/home/ubuntu/outline/build/server/models/index');
     Document = models.Document;
     Collection = models.Collection;
     
-    const helpers = require('./build/server/models/helpers/DocumentHelper');
+    const helpers = require('/home/ubuntu/outline/build/server/models/helpers/DocumentHelper');
     DocumentHelper = helpers.DocumentHelper;
     console.log('Successfully loaded built modules');
 } catch (e1) {
     try {
-        // Try direct server imports (TypeScript source)
-        Document = require('./server/models/Document').default;
-        Collection = require('./server/models/Collection').default;
-        DocumentHelper = require('./server/models/helpers/DocumentHelper').DocumentHelper;
-        console.log('Successfully loaded source modules');
+        // Try individual file imports with absolute paths
+        Document = require('/home/ubuntu/outline/build/server/models/Document').default;
+        Collection = require('/home/ubuntu/outline/build/server/models/Collection').default;
+        DocumentHelper = require('/home/ubuntu/outline/build/server/models/helpers/DocumentHelper').DocumentHelper;
+        console.log('Successfully loaded individual modules');
     } catch (e2) {
         try {
-            // Try index file approach
-            const models = require('./build/server/models/index');
-            Document = models.Document;
-            Collection = models.Collection;
-            DocumentHelper = require('./build/server/models/helpers/DocumentHelper').DocumentHelper;
-            console.log('Successfully loaded modules via index');
+            // Try direct server imports (TypeScript source) with absolute paths
+            Document = require('/home/ubuntu/outline/server/models/Document').default;
+            Collection = require('/home/ubuntu/outline/server/models/Collection').default;
+            DocumentHelper = require('/home/ubuntu/outline/server/models/helpers/DocumentHelper').DocumentHelper;
+            console.log('Successfully loaded source modules');
         } catch (e3) {
             console.error('Could not load Outline modules:');
-            console.error('Error 1 (build):', e1.message);
-            console.error('Error 2 (source):', e2.message);
-            console.error('Error 3 (index):', e3.message);
+            console.error('Error 1 (build index):', e1.message);
+            console.error('Error 2 (individual):', e2.message);
+            console.error('Error 3 (source):', e3.message);
             console.error('Available files in /home/ubuntu/outline:');
             try {
                 const files = fs.readdirSync('/home/ubuntu/outline');
