@@ -1,0 +1,10 @@
+{
+    "version": "1.0",
+    "exportedAt": "2025-06-19T03:39:51Z",
+    "exportedBy": "outline-export-cli",
+    "format": "json",
+    "includeFiles": true,
+    "databaseUrl": "postgres://outline:***@127.0.0.1:5432/outline?sslmode=disable",
+    "hostname": "d764061f134c",
+    "outlineVersion": "0.84.0"
+}
