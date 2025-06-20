@@ -102,6 +102,41 @@ check_database_connection() {
     success "Database connection verified"
 }
 
+run_database_migrations() {
+    log "Running database migrations to ensure schema exists..."
+    
+    if [[ "$DRY_RUN" == true ]]; then
+        log "[DRY RUN] Would run database migrations"
+        return
+    fi
+    
+    # Check if we're in the Outline environment
+    if [[ -f "/home/ubuntu/outline/package.json" ]]; then
+        log "Running migrations in Outline environment..."
+        cd /home/ubuntu/outline
+        
+        # First try to create the database (will fail if exists, which is fine)
+        yarn db:create --env=production-ssl-disabled 2>/dev/null || true
+        
+        # Then run migrations with proper environment
+        if ENVIRONMENT=production NODE_ENV=production yarn db:migrate --env=production-ssl-disabled 2>/dev/null; then
+            success "Database schema created/migrated successfully"
+        else
+            warn "Migration failed, trying alternative approach..."
+            # Try with different environment settings
+            if NODE_ENV=production-ssl-disabled ENVIRONMENT=production yarn db:migrate 2>/dev/null; then
+                success "Database schema created with alternative method"
+            else
+                warn "Could not run migrations automatically"
+                log "Database tables may need to be created manually"
+            fi
+        fi
+    else
+        warn "Not in Outline environment - skipping migrations"
+        warn "Make sure database schema exists before importing"
+    fi
+}
+
 check_existing_data() {
     log "Checking for existing data..."
     
@@ -210,7 +245,7 @@ def run_sql(sql, database_url):
     except subprocess.CalledProcessError as e:
         return False, e.stderr
 
-def escape_sql_value(value):
+def escape_sql_value(value, column_name=None):
     """Escape SQL values properly"""
     if value is None:
         return 'NULL'
@@ -218,7 +253,25 @@ def escape_sql_value(value):
         return 'true' if value else 'false'
     elif isinstance(value, (int, float)):
         return str(value)
-    elif isinstance(value, (dict, list)):
+    elif isinstance(value, list):
+        # Handle PostgreSQL arrays for specific columns
+        if column_name and ('Id' in column_name or column_name.endswith('Ids') or column_name == 'previousTitles'):
+            if not value:
+                return 'NULL'
+            # Convert to PostgreSQL array format
+            escaped_items = []
+            for item in value:
+                if item is not None:
+                    escaped_item = "'" + str(item).replace("'", "''") + "'"
+                    escaped_items.append(escaped_item)
+            if column_name and ('Id' in column_name or column_name.endswith('Ids')):
+                return f"ARRAY[{','.join(escaped_items)}]::uuid[]"
+            else:
+                return f"ARRAY[{','.join(escaped_items)}]::text[]"
+        else:
+            # Regular JSON array
+            return "'" + json.dumps(value).replace("'", "''") + "'"
+    elif isinstance(value, dict):
         return "'" + json.dumps(value).replace("'", "''") + "'"
     else:
         return "'" + str(value).replace("'", "''") + "'"
@@ -245,7 +298,7 @@ def import_table(table_name, records, database_url, force_mode):
             
         # Build INSERT statement
         columns = list(record.keys())
-        values = [escape_sql_value(record[col]) for col in columns]
+        values = [escape_sql_value(record[col], col) for col in columns]
         
         # Quote column names to handle reserved words
         quoted_columns = [f'"{col}"' for col in columns]
@@ -623,6 +676,7 @@ validate_import_directory
 check_database_connection
 
 if [[ "$SKIP_DATABASE" != true ]]; then
+    run_database_migrations
     check_existing_data
     backup_existing_data
 fi

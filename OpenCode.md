@@ -78,6 +78,9 @@ outline export-full -d /tmp/backup --format both --verbose
 # Export without file attachments or markdown
 outline export-full -d /tmp/backup --no-files --no-markdown
 
+# Export clean markdown without metadata headers
+outline export-full -d /tmp/backup --clean-markdown
+
 # Import with advanced options  
 outline import-full -d /tmp/backup --dry-run --verbose
 
@@ -89,15 +92,33 @@ outline api-export -t your-api-token -o /tmp/downloads
 - **JSON**: Structured data for importing into another Outline instance
 - **SQL**: Complete PostgreSQL database dump
 - **Files**: File attachments and uploads
-- **Markdown**: Individual markdown files organized by collection (NEW!)
+- **Markdown (Standard)**: Individual markdown files with YAML frontmatter metadata
+- **Markdown (Clean)**: Pure markdown content without metadata headers
 
 ### Export Contents
 The `export-full` command now creates:
 - `workspace.json` - Complete workspace data
 - `files/` - All file attachments
 - `markdown/` - All documents as `.md` files organized by collection
+  - **Standard mode**: Includes YAML frontmatter with title, dates, collection, ID
+  - **Clean mode** (`--clean-markdown`): Pure markdown content only
 - `export_metadata.json` - Export metadata
 - `README.md` - Export documentation
+
+### Import Process
+The import automatically:
+1. **Runs database migrations** to ensure schema exists
+2. **Creates backup** of existing data before import
+3. **Imports JSON data** with proper error handling and array field support
+4. **Copies file attachments** if present
+5. **Fixes database consistency** issues after import
+6. **Sets up user permissions** for imported collections
+
+### Array Field Support
+The import now properly handles PostgreSQL array fields:
+- **UUID arrays** (like `collaboratorIds`) are converted with proper casting: `ARRAY['uuid1','uuid2']::uuid[]`
+- **JSON arrays** are preserved as JSON strings for non-UUID fields
+- **Automatic detection** based on field names ending in 'Id' or 'Ids'
 
 ### Use Cases
 - **Automated Backups**: Schedule daily exports with cron
