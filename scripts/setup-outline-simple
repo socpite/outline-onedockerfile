@@ -47,9 +47,9 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO outline;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO outline;
 " > /dev/null 2>&1
 
-# Run database migrations
-echo "🗃️  Running database migrations..."
-yarn db:migrate --env=production-ssl-disabled
+# # Run database migrations
+# echo "🗃️  Running database migrations..."
+# yarn db:migrate --env=production-ssl-disabled
 
 # Set proper ownership (optimized for speed)
 echo "📋 Setting file ownership..."

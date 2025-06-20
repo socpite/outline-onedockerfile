@@ -66,10 +66,10 @@ RUN UBUNTU_UID=$(id -u ubuntu) && \
     mkdir -p /tmp/.ICE-unix && \
     chmod 1777 /tmp/.ICE-unix
 
-# Clone Outline source, install dependencies (in development mode), and build
+# Copy Outline source from submodule, install dependencies (in development mode), and build
 WORKDIR /home/ubuntu/outline
-RUN git clone https://github.com/outline/outline.git . && \
-    chmod -R 777 /home/ubuntu/outline && \
+COPY outline/ .
+RUN chmod -R 777 /home/ubuntu/outline && \
     yarn config set registry https://registry.npmjs.org && \
     NODE_ENV=development yarn install --network-timeout 1000000 && \
     yarn add smtp-server mailparser && \
