@@ -259,10 +259,45 @@ const fs = require('fs');
 // Set up the Outline environment
 process.chdir('/home/ubuntu/outline');
 process.env.NODE_ENV = process.env.NODE_ENV || 'production';
+process.env.NODE_PATH = '/home/ubuntu/outline/node_modules';
 
-// Import Outline modules
-const { Document, Collection } = require('./build/server/models');
-const { DocumentHelper } = require('./build/server/models/helpers/DocumentHelper');
+// Import Outline modules - try different paths
+let Document, Collection, DocumentHelper;
+
+try {
+    // Try the build directory first
+    const models = require('./build/server/models');
+    Document = models.Document;
+    Collection = models.Collection;
+    
+    const helpers = require('./build/server/models/helpers/DocumentHelper');
+    DocumentHelper = helpers.DocumentHelper;
+} catch (e1) {
+    try {
+        // Try direct server imports
+        Document = require('./server/models/Document').default;
+        Collection = require('./server/models/Collection').default;
+        DocumentHelper = require('./server/models/helpers/DocumentHelper').DocumentHelper;
+    } catch (e2) {
+        try {
+            // Try without build directory
+            const models = require('./server/models');
+            Document = models.Document;
+            Collection = models.Collection;
+            DocumentHelper = require('./server/models/helpers/DocumentHelper').DocumentHelper;
+        } catch (e3) {
+            console.error('Could not load Outline modules:', e3.message);
+            console.error('Available files in /home/ubuntu/outline:');
+            try {
+                const files = fs.readdirSync('/home/ubuntu/outline');
+                console.error(files.join(', '));
+            } catch (e4) {
+                console.error('Could not list directory');
+            }
+            process.exit(1);
+        }
+    }
+}
 
 // Function to sanitize filename
 function sanitizeFilename(filename) {
@@ -283,6 +318,9 @@ async function exportMarkdown() {
     
     try {
         console.log('Fetching documents from database...');
+        console.log('Using Document model:', !!Document);
+        console.log('Using Collection model:', !!Collection);
+        console.log('Using DocumentHelper:', !!DocumentHelper);
         
         // Get all documents with their collections
         const documents = await Document.findAll({
@@ -357,6 +395,23 @@ id: ${doc.id}
                     }
                 } catch (error) {
                     console.error(`Error exporting document "${doc.title}":`, error.message);
+                    // Create a basic file even if conversion fails
+                    const filename = sanitizeFilename(doc.title) + '.md';
+                    const filepath = path.join(collectionDir, filename);
+                    const basicContent = `---
+title: "${doc.title}"
+created: ${doc.createdAt}
+updated: ${doc.updatedAt}
+collection: "${collectionName}"
+id: ${doc.id}
+---
+
+# ${doc.title}
+
+*Error converting document content: ${error.message}*
+`;
+                    fs.writeFileSync(filepath, basicContent);
+                    exportedCount++;
                 }
             }
         }
@@ -382,6 +437,7 @@ id: ${doc.id}
         
     } catch (error) {
         console.error('Error during markdown export:', error);
+        console.error('Stack trace:', error.stack);
         process.exit(1);
     }
 }
@@ -390,7 +446,7 @@ exportMarkdown();
 NODE_SCRIPT
     
     # Run the Node.js export script in the Outline environment
-    if cd /home/ubuntu/outline && node /tmp/export_markdown_outline.js "$markdown_dir"; then
+    if cd /home/ubuntu/outline && NODE_PATH="/home/ubuntu/outline/node_modules" node /tmp/export_markdown_outline.js "$markdown_dir"; then
         local size=$(du -sh "$markdown_dir" | cut -f1)
         success "Markdown files exported using Outline's DocumentHelper ($size)"
     else
