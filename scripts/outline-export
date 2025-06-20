@@ -7,6 +7,7 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXPORT_DIR=""
 INCLUDE_FILES=true
+INCLUDE_MARKDOWN=true
 FORMAT="json"
 VERBOSE=false
 
@@ -26,13 +27,14 @@ usage() {
     echo "  -d, --dir DIR          Export directory (required)"
     echo "  -f, --format FORMAT    Export format: json, sql, both (default: json)"
     echo "  --no-files            Skip file attachments export"
+    echo "  --no-markdown         Skip markdown files export"
     echo "  -v, --verbose         Verbose output"
     echo "  -h, --help            Show this help"
     echo ""
     echo "Examples:"
     echo "  $0 -d /tmp/outline-export"
     echo "  $0 -d ./backup --format both --verbose"
-    echo "  $0 -d ./backup --no-files"
+    echo "  $0 -d ./backup --no-files --no-markdown"
 }
 
 log() {
@@ -234,6 +236,230 @@ export_files() {
     fi
 }
 
+export_markdown() {
+    local markdown_dir="$EXPORT_DIR/markdown"
+    log "Exporting documents as markdown files to: $markdown_dir"
+    
+    # Check if node is available
+    if ! command -v node &> /dev/null; then
+        error "node is required for markdown export. Please install Node.js."
+    fi
+    
+    # Create markdown export directory
+    mkdir -p "$markdown_dir"
+    
+    # Create Node.js script for markdown export
+    cat > /tmp/export_markdown.js << 'NODE_SCRIPT'
+const { execSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+// Function to sanitize filename
+function sanitizeFilename(filename) {
+    return filename
+        .replace(/[<>:"/\\|?*]/g, '_')  // Replace invalid characters
+        .replace(/\s+/g, '_')          // Replace spaces with underscores
+        .replace(/_{2,}/g, '_')        // Replace multiple underscores with single
+        .replace(/^_+|_+$/g, '')       // Remove leading/trailing underscores
+        .substring(0, 200);            // Limit length
+}
+
+// Function to execute SQL and return JSON result
+function runSQL(sql) {
+    try {
+        const result = execSync(`psql "${process.env.DATABASE_URL}" -t -A -F'|' -c "${sql.replace(/"/g, '\\"')}"`, 
+                               { encoding: 'utf8' });
+        return result.trim();
+    } catch (error) {
+        console.error('SQL Error:', error.message);
+        return null;
+    }
+}
+
+// Function to get documents with collection info
+function getDocuments() {
+    const sql = `
+        SELECT 
+            d.id,
+            d.title,
+            COALESCE(d.text, '') as text,
+            d."createdAt",
+            d."updatedAt",
+            COALESCE(c.name, 'Uncategorized') as collection_name,
+            d.icon
+        FROM documents d
+        LEFT JOIN collections c ON d."collectionId" = c.id
+        WHERE d."deletedAt" IS NULL
+        ORDER BY c.name NULLS LAST, d.title;
+    `;
+    
+    const result = runSQL(sql);
+    if (!result) return [];
+    
+    try {
+        const rows = result.split('\n').filter(row => row.trim());
+        const documents = [];
+        
+        for (const row of rows) {
+            const parts = row.split('|');
+            if (parts.length >= 6) {
+                documents.push({
+                    id: parts[0] || '',
+                    title: parts[1] || 'Untitled',
+                    text: parts[2] || '',
+                    createdAt: parts[3] || '',
+                    updatedAt: parts[4] || '',
+                    collection_name: parts[5] || 'Uncategorized',
+                    icon: parts[6] || ''
+                });
+            }
+        }
+        
+        return documents;
+    } catch (error) {
+        console.error('Error parsing documents:', error.message);
+        return [];
+    }
+}
+
+// Function to convert document to markdown
+function convertToMarkdown(document) {
+    try {
+        let markdown = document.text || '';
+        
+        // Clean up the text content (remove extra whitespace, normalize line breaks)
+        markdown = markdown
+            .replace(/\r\n/g, '\n')
+            .replace(/\r/g, '\n')
+            .replace(/\n{3,}/g, '\n\n')
+            .trim();
+        
+        // If content is empty, create basic markdown
+        if (!markdown) {
+            markdown = '*This document has no content.*';
+        }
+        
+        // Add title with icon if present
+        let title = document.title;
+        if (document.icon && document.icon.trim()) {
+            title = `${document.icon} ${title}`;
+        }
+        
+        // Add title if not already present as heading
+        if (!markdown.startsWith('#')) {
+            markdown = `# ${title}\n\n${markdown}`;
+        }
+        
+        return markdown;
+    } catch (error) {
+        console.error(`Error converting document ${document.id}:`, error.message);
+        return `# ${document.title}\n\n*Error converting document content.*\n`;
+    }
+}
+
+// Main export function
+function exportMarkdown() {
+    const outputDir = process.argv[2];
+    if (!outputDir) {
+        console.error('Usage: node export_markdown.js <output_directory>');
+        process.exit(1);
+    }
+    
+    console.log('Fetching documents...');
+    const documents = getDocuments();
+    
+    if (documents.length === 0) {
+        console.log('No documents found to export.');
+        return;
+    }
+    
+    console.log(`Found ${documents.length} documents to export.`);
+    
+    // Group documents by collection
+    const collections = {};
+    for (const doc of documents) {
+        const collectionName = doc.collection_name || 'Uncategorized';
+        if (!collections[collectionName]) {
+            collections[collectionName] = [];
+        }
+        collections[collectionName].push(doc);
+    }
+    
+    let exportedCount = 0;
+    
+    // Export documents
+    for (const [collectionName, docs] of Object.entries(collections)) {
+        console.log(`Exporting collection: ${collectionName} (${docs.length} documents)`);
+        
+        // Create collection directory
+        const collectionDir = path.join(outputDir, sanitizeFilename(collectionName));
+        if (!fs.existsSync(collectionDir)) {
+            fs.mkdirSync(collectionDir, { recursive: true });
+        }
+        
+        for (const doc of docs) {
+            try {
+                const markdown = convertToMarkdown(doc);
+                const filename = sanitizeFilename(doc.title) + '.md';
+                const filepath = path.join(collectionDir, filename);
+                
+                // Add metadata header
+                const metadata = `---
+title: "${doc.title}"
+created: ${doc.createdAt}
+updated: ${doc.updatedAt}
+collection: "${collectionName}"
+---
+
+`;
+                
+                fs.writeFileSync(filepath, metadata + markdown);
+                exportedCount++;
+                
+                if (exportedCount % 10 === 0) {
+                    console.log(`Exported ${exportedCount} documents...`);
+                }
+            } catch (error) {
+                console.error(`Error exporting document "${doc.title}":`, error.message);
+            }
+        }
+    }
+    
+    console.log(`Successfully exported ${exportedCount} documents to ${outputDir}`);
+    
+    // Create index file
+    const indexPath = path.join(outputDir, 'README.md');
+    let indexContent = `# Exported Documents\n\nExported ${exportedCount} documents on ${new Date().toISOString()}\n\n`;
+    
+    for (const [collectionName, docs] of Object.entries(collections)) {
+        indexContent += `## ${collectionName} (${docs.length} documents)\n\n`;
+        for (const doc of docs) {
+            const filename = sanitizeFilename(doc.title) + '.md';
+            const collectionDir = sanitizeFilename(collectionName);
+            indexContent += `- [${doc.title}](${collectionDir}/${filename})\n`;
+        }
+        indexContent += '\n';
+    }
+    
+    fs.writeFileSync(indexPath, indexContent);
+    console.log(`Created index file: ${indexPath}`);
+}
+
+exportMarkdown();
+NODE_SCRIPT
+    
+    # Run the Node.js export script
+    if node /tmp/export_markdown.js "$markdown_dir"; then
+        local size=$(du -sh "$markdown_dir" | cut -f1)
+        success "Markdown files exported ($size)"
+    else
+        error "Failed to export markdown files"
+    fi
+    
+    # Clean up
+    rm -f /tmp/export_markdown.js
+}
+
 create_metadata() {
     local metadata_file="$EXPORT_DIR/export_metadata.json"
     log "Creating export metadata: $metadata_file"
@@ -245,6 +471,7 @@ create_metadata() {
     "exportedBy": "outline-export-cli",
     "format": "$FORMAT",
     "includeFiles": $INCLUDE_FILES,
+    "includeMarkdown": $INCLUDE_MARKDOWN,
     "databaseUrl": "$(echo "$DATABASE_URL" | sed 's/:[^:]*@/:***@/')",
     "hostname": "$(hostname)",
     "outlineVersion": "$(node -p "require('/home/ubuntu/outline/package.json').version" 2>/dev/null || echo 'unknown')"
@@ -268,6 +495,7 @@ This directory contains a complete export of an Outline workspace.
 - **Exported At**: $(date -u +"%Y-%m-%d %H:%M:%S UTC")
 - **Format**: $FORMAT
 - **Include Files**: $INCLUDE_FILES
+- **Include Markdown**: $INCLUDE_MARKDOWN
 
 ## Contents
 
@@ -283,6 +511,10 @@ EOF
     
     if [[ "$INCLUDE_FILES" == true ]]; then
         echo "- \`files/\` - File attachments and uploads" >> "$readme_file"
+    fi
+    
+    if [[ "$INCLUDE_MARKDOWN" == true ]]; then
+        echo "- \`markdown/\` - All documents exported as markdown files" >> "$readme_file"
     fi
     
     cat >> "$readme_file" << EOF
@@ -328,6 +560,10 @@ while [[ $# -gt 0 ]]; do
             INCLUDE_FILES=false
             shift
             ;;
+        --no-markdown)
+            INCLUDE_MARKDOWN=false
+            shift
+            ;;
         -v|--verbose)
             VERBOSE=true
             shift
@@ -361,6 +597,7 @@ echo "🚀 Starting Outline export..."
 echo "📁 Export directory: $EXPORT_DIR"
 echo "📋 Format: $FORMAT"
 echo "📎 Include files: $INCLUDE_FILES"
+echo "📝 Include markdown: $INCLUDE_MARKDOWN"
 echo ""
 
 # Warning about export timing
@@ -388,6 +625,11 @@ fi
 
 # Export files
 export_files
+
+# Export markdown
+if [[ "$INCLUDE_MARKDOWN" == true ]]; then
+    export_markdown
+fi
 
 # Create metadata and documentation
 create_metadata

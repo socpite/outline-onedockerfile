@@ -72,8 +72,11 @@ outline import /tmp/my-backup --force
 
 ### Advanced Export/Import Options
 ```bash
-# Export with advanced options
+# Export with advanced options (includes markdown files)
 outline export-full -d /tmp/backup --format both --verbose
+
+# Export without file attachments or markdown
+outline export-full -d /tmp/backup --no-files --no-markdown
 
 # Import with advanced options  
 outline import-full -d /tmp/backup --dry-run --verbose
@@ -85,8 +88,16 @@ outline api-export -t your-api-token -o /tmp/downloads
 ### Export Formats
 - **JSON**: Structured data for importing into another Outline instance
 - **SQL**: Complete PostgreSQL database dump
-- **Markdown**: ZIP file with Markdown documents and images
-- **HTML**: ZIP file with HTML documents and images
+- **Files**: File attachments and uploads
+- **Markdown**: Individual markdown files organized by collection (NEW!)
+
+### Export Contents
+The `export-full` command now creates:
+- `workspace.json` - Complete workspace data
+- `files/` - All file attachments
+- `markdown/` - All documents as `.md` files organized by collection
+- `export_metadata.json` - Export metadata
+- `README.md` - Export documentation
 
 ### Use Cases
 - **Automated Backups**: Schedule daily exports with cron
