@@ -20,24 +20,34 @@ usage() {
     echo "Commands:"
     echo "  export       Export Outline workspace (simple)"
     echo "  export-full  Export with advanced options (bash version)"
-    echo "  import       Import Outline workspace (simple)"
-    echo "  import-full  Import with advanced options (bash version)"
+    echo "  import       Import Outline workspace (simple, original)"
+    echo "  import-v2    Import Outline workspace (simple, improved)"
+    echo "  import-full  Import with advanced options (bash version, original)"
+    echo "  import-full-v2  Import with advanced options (bash version, improved)"
     echo "  api-export   Export via Outline API (requires token)"
     echo "  help         Show this help"
     echo ""
     echo "Simple Commands (recommended):"
     echo "  export <dir>           - Export to directory"
-    echo "  import <dir>           - Import from directory"
+    echo "  import <dir>           - Import from directory (original)"
+    echo "  import-v2 <dir>        - Import from directory (improved)"
     echo "  import <dir> --force   - Force import (overwrite data)"
     echo ""
     echo "Examples:"
     echo "  $0 export /tmp/my-backup"
     echo "  $0 import /tmp/my-backup --force"
+    echo "  $0 import-v2 /tmp/my-backup --force --verbose"
+    echo "  $0 import-full-v2 -d /tmp/my-backup --force --dry-run"
     echo "  $0 api-export -t your-api-token"
     echo ""
     echo "For advanced options:"
     echo "  $0 export-full --help"
     echo "  $0 import-full --help"
+    echo ""
+    echo "Troubleshooting:"
+    echo "  If import fails with 'relation does not exist' errors:"
+    echo "  Run: ./scripts/outline-import-migrate-db"
+    echo "  Then retry your import command."
 }
 
 check_environment() {
@@ -76,10 +86,20 @@ case "${1:-}" in
         shift
         exec "$SCRIPT_DIR/outline-import-simple" "$@"
         ;;
+    import-v2)
+        check_environment
+        shift
+        exec "$SCRIPT_DIR/outline-import-simple-v2.js" "$@"
+        ;;
     import-full)
         check_environment
         shift
         exec "$SCRIPT_DIR/outline-import" "$@"
+        ;;
+    import-full-v2)
+        check_environment
+        shift
+        exec "$SCRIPT_DIR/outline-import-v2" "$@"
         ;;
     api-export)
         # API export doesn't need database access

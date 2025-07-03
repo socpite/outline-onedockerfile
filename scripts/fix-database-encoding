@@ -1,0 +1,102 @@
+#!/bin/bash
+
+# Fix Database Encoding Issues
+# This script recreates the database with proper UTF8 encoding
+
+set -e
+
+echo "🔧 Fixing database encoding issues..."
+
+# Check if we're in a container
+if [ -f /.dockerenv ]; then
+    echo "Running inside container"
+    POSTGRES_USER="postgres"
+    DB_NAME="outline"
+    DB_USER="outline"
+    DB_PASS="password"
+else
+    echo "Running outside container - need container name"
+    CONTAINER_NAME=${1:-$(docker ps --format "table {{.Names}}" | grep -v NAMES | head -1)}
+    if [ -z "$CONTAINER_NAME" ]; then
+        echo "❌ No running container found. Please specify container name."
+        exit 1
+    fi
+    echo "Using container: $CONTAINER_NAME"
+fi
+
+# Function to run SQL in container
+run_sql() {
+    local sql="$1"
+    if [ -f /.dockerenv ]; then
+        su - postgres -c "psql -c \"$sql\""
+    else
+        docker exec "$CONTAINER_NAME" su - postgres -c "psql -c \"$sql\""
+    fi
+}
+
+# Function to run SQL on specific database
+run_sql_db() {
+    local sql="$1"
+    local db="$2"
+    if [ -f /.dockerenv ]; then
+        su - postgres -c "psql -d \"$db\" -c \"$sql\""
+    else
+        docker exec "$CONTAINER_NAME" su - postgres -c "psql -d \"$db\" -c \"$sql\""
+    fi
+}
+
+echo "📊 Current database encoding:"
+run_sql "SELECT datname, pg_encoding_to_char(encoding) as encoding FROM pg_database WHERE datname = 'outline';"
+
+echo ""
+echo "🛑 Stopping Outline application..."
+if [ -f /.dockerenv ]; then
+    pkill -f "node.*outline" || true
+    sleep 2
+else
+    docker exec "$CONTAINER_NAME" pkill -f "node.*outline" || true
+    sleep 2
+fi
+
+echo ""
+echo "💾 Creating backup of current database..."
+if [ -f /.dockerenv ]; then
+    su - postgres -c "pg_dump outline > /tmp/outline_backup_$(date +%Y%m%d_%H%M%S).sql"
+else
+    docker exec "$CONTAINER_NAME" su - postgres -c "pg_dump outline > /tmp/outline_backup_$(date +%Y%m%d_%H%M%S).sql"
+fi
+
+echo ""
+echo "🗑️ Dropping existing database..."
+run_sql "DROP DATABASE IF EXISTS outline;"
+
+echo ""
+echo "👤 Recreating user with proper permissions..."
+run_sql "DROP USER IF EXISTS outline;"
+run_sql "CREATE USER outline WITH PASSWORD 'password';"
+run_sql "ALTER USER outline CREATEDB;"
+
+echo ""
+echo "🆕 Creating new database with UTF8 encoding..."
+run_sql "CREATE DATABASE outline WITH OWNER outline ENCODING 'UTF8' LC_COLLATE='C.utf8' LC_CTYPE='C.utf8' TEMPLATE template0;"
+
+echo ""
+echo "🔑 Granting permissions..."
+run_sql "GRANT ALL PRIVILEGES ON DATABASE outline TO outline;"
+run_sql_db "GRANT ALL ON SCHEMA public TO outline;" "outline"
+run_sql_db "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO outline;" "outline"
+run_sql_db "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO outline;" "outline"
+
+echo ""
+echo "✅ Database encoding fixed:"
+run_sql "SELECT datname, pg_encoding_to_char(encoding) as encoding FROM pg_database WHERE datname = 'outline';"
+
+echo ""
+echo "🔄 Database is ready for import with proper UTF8 encoding!"
+echo "   Run the import script again to import your data."
+
+if [ ! -f /.dockerenv ]; then
+    echo ""
+    echo "🚀 To restart Outline and run import:"
+    echo "   docker exec $CONTAINER_NAME /scripts/outline-import /data-fixed"
+fi

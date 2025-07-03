@@ -189,10 +189,22 @@ import_database_json() {
     
     log "Importing database from JSON: $json_file"
     
-    # Check if python3 is available for JSON parsing
-    if ! command -v python3 &> /dev/null; then
+    # Determine which Python to use (prefer system Python) and log it
+    local python_executable
+    if command -v /usr/bin/python3 &> /dev/null; then
+        python_executable="/usr/bin/python3"
+        log "Using system Python for JSON import: $python_executable"
+    elif command -v python3 &> /dev/null; then
+        python_executable=$(command -v python3)
+        warn "Using non-system Python for JSON import: $python_executable"
+    else
         error "python3 is required for JSON import. Please install python3."
     fi
+    
+    # Log the Python version being used
+    local python_version
+    python_version=$("$python_executable" --version 2>&1 || echo "Unknown")
+    log "JSON import Python version: $python_version"
     
     # Create Python script for import
     cat > /tmp/import_json.py << 'PYTHON_SCRIPT'
@@ -200,6 +212,15 @@ import json
 import sys
 import subprocess
 import os
+
+# Log Python info at start
+print(f"🐍 Python executable: {sys.executable}")
+print(f"🐍 Python version: {sys.version}")
+if sys.executable.startswith('/usr/bin/python'):
+    print("✅ Using system Python")
+else:
+    print(f"⚠️  Using non-system Python: {sys.executable}")
+print()
 
 def run_sql(sql, database_url):
     """Execute SQL command using psql"""
@@ -347,8 +368,9 @@ if __name__ == "__main__":
     main()
 PYTHON_SCRIPT
     
-    # Run the Python import script
-    if python3 /tmp/import_json.py "$json_file" "$DATABASE_URL" "$FORCE"; then
+    # Run the Python import script with the determined Python executable
+    log "Executing: $python_executable /tmp/import_json.py $json_file $DATABASE_URL $FORCE"
+    if "$python_executable" /tmp/import_json.py "$json_file" "$DATABASE_URL" "$FORCE"; then
         success "Database imported from JSON"
     else
         error "Failed to import database from JSON"

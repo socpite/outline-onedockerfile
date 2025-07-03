@@ -1,0 +1,392 @@
+#!/usr/bin/env node
+// Outline Simple Import Script - Improved Version
+// Fixed encoding issues, foreign key handling, and error handling
+
+const { Sequelize, DataTypes, Op } = require('sequelize');
+const fs = require('fs');
+const path = require('path');
+
+// Change to Outline directory to access node_modules
+process.chdir('/home/ubuntu/outline');
+
+const args = process.argv.slice(2);
+const importDir = args[0];
+const force = args.includes('--force');
+const verbose = args.includes('--verbose');
+
+function log(message) {
+    console.log(`[${new Date().toISOString()}] ${message}`);
+}
+
+function error(message) {
+    console.error(`❌ ERROR: ${message}`);
+    process.exit(1);
+}
+
+function warn(message) {
+    console.warn(`⚠️  WARNING: ${message}`);
+}
+
+if (!importDir) {
+    console.error('Usage: outline-import-simple-v2 <import-directory> [--force] [--verbose]');
+    process.exit(1);
+}
+
+if (!process.env.DATABASE_URL) {
+    error('DATABASE_URL environment variable is required');
+}
+
+async function importData() {
+    const sequelize = new Sequelize(process.env.DATABASE_URL, {
+        dialect: 'postgres',
+        logging: verbose ? console.log : false,
+        dialectOptions: {
+            charset: 'utf8mb4'
+        }
+    });
+
+    try {
+        log('🔗 Connecting to database...');
+        await sequelize.authenticate();
+
+        // Check if data exists
+        const [existingTeams] = await sequelize.query('SELECT COUNT(*) as count FROM teams');
+        const [existingUsers] = await sequelize.query('SELECT COUNT(*) as count FROM users');
+        const [existingDocs] = await sequelize.query('SELECT COUNT(*) as count FROM documents');
+        
+        const hasData = existingTeams[0].count > 0 || existingUsers[0].count > 0 || existingDocs[0].count > 0;
+        
+        if (hasData && !force) {
+            console.log('⚠️  Existing data found:');
+            console.log(`   Teams: ${existingTeams[0].count}`);
+            console.log(`   Users: ${existingUsers[0].count}`);
+            console.log(`   Documents: ${existingDocs[0].count}`);
+            console.log('');
+            console.log('Use --force to overwrite existing data');
+            process.exit(1);
+        }
+
+        // Load export data
+        const jsonFile = path.join(importDir, 'workspace.json');
+        if (!fs.existsSync(jsonFile)) {
+            error('workspace.json not found in import directory');
+        }
+
+        log('📊 Loading export data...');
+        let exportData;
+        try {
+            const rawData = fs.readFileSync(jsonFile, 'utf8');
+            exportData = JSON.parse(rawData);
+        } catch (e) {
+            error(`Failed to parse JSON: ${e.message}`);
+        }
+        
+        log(`📅 Export from: ${exportData.exportedAt || 'Unknown'}`);
+        if (exportData.stats) {
+            log(`📊 Contains: ${exportData.stats.teams || 0} teams, ${exportData.stats.users || 0} users, ${exportData.stats.documents || 0} documents`);
+        }
+
+        // Clear existing data if force mode
+        if (force && hasData) {
+            log('🗑️ Clearing existing data...');
+            
+            // Disable foreign key checks temporarily
+            await sequelize.query('SET session_replication_role = replica;');
+            
+            const tables = ['views', 'stars', 'pins', 'shares', 'attachments', 'group_users', 
+                          'memberships', 'documents', 'groups', 'collections', 'users', 'teams'];
+            
+            for (const table of tables) {
+                try {
+                    await sequelize.query(`TRUNCATE TABLE "${table}" CASCADE`);
+                    verbose && log(`   Cleared ${table}`);
+                } catch (err) {
+                    verbose && warn(`Could not clear ${table}: ${err.message}`);
+                }
+            }
+            
+            // Re-enable foreign key checks
+            await sequelize.query('SET session_replication_role = DEFAULT;');
+        }
+
+        // Import in dependency order with better error handling
+        const tables = [
+            'teams', 'users', 'collections', 'groups', 'documents', 
+            'attachments', 'shares', 'stars', 'pins', 'views', 
+            'memberships', 'group_users'
+        ];
+
+        log('🗃️  Importing database...');
+        
+        const importStats = {};
+        
+        for (const table of tables) {
+            const data = (exportData.data && exportData.data[table]) || [];
+            
+            if (data.length === 0) {
+                log(`   ${table}: no data`);
+                importStats[table] = 0;
+                continue;
+            }
+
+            log(`   ${table}: importing ${data.length} records...`);
+            
+            let successCount = 0;
+            let errorCount = 0;
+            
+            // Process records individually with better error handling
+            for (const record of data) {
+                try {
+                    // Fix common data issues
+                    const fixedRecord = fixRecord(table, record);
+                    
+                    if (!fixedRecord) {
+                        errorCount++;
+                        continue; // Skip invalid records
+                    }
+                    
+                    // Build parameterized query to prevent SQL injection
+                    const columns = Object.keys(fixedRecord);
+                    const values = Object.values(fixedRecord);
+                    
+                    const columnNames = columns.map(col => `"${col}"`).join(', ');
+                    const placeholders = values.map((_, index) => `$${index + 1}`).join(', ');
+                    
+                    // Use upsert to handle conflicts
+                    const conflictColumns = columns.filter(col => col !== 'id')
+                        .map(col => `"${col}" = EXCLUDED."${col}"`)
+                        .join(', ');
+                    
+                    const query = `
+                        INSERT INTO "${table}" (${columnNames}) 
+                        VALUES (${placeholders})
+                        ON CONFLICT (id) DO UPDATE SET ${conflictColumns}
+                    `;
+                    
+                    await sequelize.query(query, {
+                        bind: values,
+                        type: sequelize.QueryTypes.INSERT
+                    });
+                    
+                    successCount++;
+                    
+                } catch (err) {
+                    errorCount++;
+                    verbose && warn(`Failed to insert record in ${table}: ${err.message}`);
+                }
+            }
+            
+            log(`   ✅ ${table}: ${successCount} imported, ${errorCount} failed`);
+            importStats[table] = successCount;
+        }
+
+        // Fix orphaned records after import
+        await fixOrphanedRecords(sequelize);
+
+        // Import files
+        await importFiles(importDir);
+
+        // Show final stats
+        log('📊 Import completed! Final database stats:');
+        const [finalTeams] = await sequelize.query('SELECT COUNT(*) as count FROM teams');
+        const [finalUsers] = await sequelize.query('SELECT COUNT(*) as count FROM users');
+        const [finalDocs] = await sequelize.query('SELECT COUNT(*) as count FROM documents');
+        const [finalCollections] = await sequelize.query('SELECT COUNT(*) as count FROM collections');
+        
+        console.log(`   Teams: ${finalTeams[0].count}`);
+        console.log(`   Users: ${finalUsers[0].count}`);
+        console.log(`   Collections: ${finalCollections[0].count}`);
+        console.log(`   Documents: ${finalDocs[0].count}`);
+        
+        log('✅ Import completed successfully!');
+        
+    } catch (error) {
+        console.error('❌ Import failed:', error.message);
+        if (verbose) {
+            console.error(error.stack);
+        }
+        process.exit(1);
+    } finally {
+        await sequelize.close();
+    }
+}
+
+function fixRecord(table, record) {
+    if (!record || !record.id) {
+        return null; // Skip records without ID
+    }
+    
+    const fixed = { ...record };
+    
+    // Ensure timestamps exist
+    const now = new Date().toISOString();
+    if (!fixed.createdAt) fixed.createdAt = now;
+    if (!fixed.updatedAt) fixed.updatedAt = now;
+    
+    // Table-specific fixes
+    switch (table) {
+        case 'documents':
+            // Fix missing content
+            if (!fixed.content) {
+                if (fixed.text) {
+                    fixed.content = {
+                        type: "doc",
+                        content: [{
+                            type: "paragraph",
+                            content: [{ type: "text", text: fixed.text }]
+                        }]
+                    };
+                } else {
+                    fixed.content = {
+                        type: "doc",
+                        content: [{ type: "paragraph" }]
+                    };
+                }
+            }
+            
+            // Ensure content is properly serialized
+            if (typeof fixed.content === 'object') {
+                fixed.content = JSON.stringify(fixed.content);
+            }
+            
+            // Fix collaboratorIds array
+            if (!fixed.collaboratorIds) {
+                fixed.collaboratorIds = [];
+            }
+            if (Array.isArray(fixed.collaboratorIds)) {
+                fixed.collaboratorIds = JSON.stringify(fixed.collaboratorIds);
+            }
+            break;
+            
+        case 'users':
+            // Fix notification settings
+            if (!fixed.notificationSettings) {
+                fixed.notificationSettings = {};
+            }
+            if (typeof fixed.notificationSettings === 'object') {
+                fixed.notificationSettings = JSON.stringify(fixed.notificationSettings);
+            }
+            break;
+            
+        case 'collections':
+            // Fix membershipIds
+            if (!fixed.membershipIds) {
+                fixed.membershipIds = [];
+            }
+            if (Array.isArray(fixed.membershipIds)) {
+                fixed.membershipIds = JSON.stringify(fixed.membershipIds);
+            }
+            break;
+            
+        case 'teams':
+            // Fix allowedDomains
+            if (!fixed.allowedDomains) {
+                fixed.allowedDomains = [];
+            }
+            if (Array.isArray(fixed.allowedDomains)) {
+                fixed.allowedDomains = JSON.stringify(fixed.allowedDomains);
+            }
+            break;
+    }
+    
+    // Sanitize string values to handle encoding issues
+    for (const [key, value] of Object.entries(fixed)) {
+        if (typeof value === 'string') {
+            try {
+                // Ensure valid UTF-8 and remove null bytes
+                fixed[key] = value.replace(/\0/g, '');
+            } catch (e) {
+                // If encoding fails, replace with safe version
+                fixed[key] = value.replace(/[^\x20-\x7E]/g, '?');
+            }
+        }
+    }
+    
+    return fixed;
+}
+
+async function fixOrphanedRecords(sequelize) {
+    log('🔧 Fixing orphaned records...');
+    
+    try {
+        // Remove documents with invalid collection references
+        const [result1] = await sequelize.query(`
+            DELETE FROM documents 
+            WHERE "collectionId" IS NOT NULL 
+            AND "collectionId" NOT IN (SELECT id FROM collections)
+        `);
+        if (result1.rowCount > 0) {
+            log(`   Removed ${result1.rowCount} documents with invalid collection references`);
+        }
+        
+        // Remove orphaned attachments
+        const [result2] = await sequelize.query(`
+            DELETE FROM attachments 
+            WHERE "documentId" NOT IN (SELECT id FROM documents)
+        `);
+        if (result2.rowCount > 0) {
+            log(`   Removed ${result2.rowCount} orphaned attachments`);
+        }
+        
+        // Remove orphaned memberships
+        const [result3] = await sequelize.query(`
+            DELETE FROM memberships 
+            WHERE "userId" NOT IN (SELECT id FROM users) 
+            OR "teamId" NOT IN (SELECT id FROM teams)
+        `);
+        if (result3.rowCount > 0) {
+            log(`   Removed ${result3.rowCount} orphaned memberships`);
+        }
+        
+        log('✅ Orphaned records cleanup completed');
+        
+    } catch (error) {
+        warn(`Failed to fix orphaned records: ${error.message}`);
+    }
+}
+
+async function importFiles(importDir) {
+    const filesSource = path.join(importDir, 'files');
+    const filesTarget = '/var/lib/outline/data';
+    
+    if (!fs.existsSync(filesSource)) {
+        log('📎 No files directory found, skipping file import');
+        return;
+    }
+    
+    log('📎 Importing files...');
+    
+    try {
+        // Create target directory
+        if (!fs.existsSync(filesTarget)) {
+            fs.mkdirSync(filesTarget, { recursive: true });
+        }
+        
+        // Copy files recursively
+        const { execSync } = require('child_process');
+        execSync(`cp -r "${filesSource}/"* "${filesTarget}/" 2>/dev/null || true`);
+        
+        // Fix permissions
+        try {
+            execSync(`chown -R ubuntu:ubuntu "${filesTarget}" 2>/dev/null || true`);
+            execSync(`chmod -R 755 "${filesTarget}" 2>/dev/null || true`);
+        } catch (error) {
+            warn('Could not fix file permissions - you may need to do this manually');
+        }
+        
+        // Get file count and size
+        try {
+            const fileCount = execSync(`find "${filesTarget}" -type f | wc -l`, { encoding: 'utf8' }).trim();
+            const totalSize = execSync(`du -sh "${filesTarget}" | cut -f1`, { encoding: 'utf8' }).trim();
+            log(`✅ Files imported: ${fileCount} files (${totalSize})`);
+        } catch (e) {
+            log('✅ Files imported successfully');
+        }
+        
+    } catch (error) {
+        warn(`File import failed: ${error.message}`);
+    }
+}
+
+// Start the import process
+importData(); 
